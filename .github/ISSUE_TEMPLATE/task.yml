@@ -1,38 +1,20 @@
-name: Task / Bug
-description: Technical work or bug fix
-title: "[Task]: "
-labels: ["task"]
+name: Task
+description: A general task or chore
+labels: ["chore"]
 body:
-  - type: dropdown
-    id: type
-    attributes:
-      label: Type
-      options:
-        - Task
-        - Bug
-    validations:
-      required: true
-
   - type: textarea
     id: description
     attributes:
       label: Description
-      placeholder: What needs to be done?
+      description: What needs to be done and why?
     validations:
       required: true
-
   - type: textarea
-    id: steps
+    id: acceptance
     attributes:
-      label: Steps / Details
-      placeholder: |
-        1. Do this
-        2. Then this
-
-  - type: textarea
-    id: done
-    attributes:
-      label: Definition of Done
-      placeholder: |
-        - [ ] Code works
-        - [ ] Tested
+      label: Acceptance Criteria
+      description: How do we know this is done?
+      value: |
+        - [ ]
+    validations:
+      required: false
