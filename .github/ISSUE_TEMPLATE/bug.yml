@@ -7,7 +7,7 @@ body:
     id: id
     attributes:
       label: Bug ID
-      description: e.g. BUG-001
+      description: e.g. BUG-1
     validations:
       required: true
 
@@ -15,19 +15,7 @@ body:
     id: priority
     attributes:
       label: Priority
-      description: P0 / P1 / P2 / P3
-    validations:
-      required: true
-
-  - type: dropdown
-    id: severity
-    attributes:
-      label: Severity
-      options:
-        - Critical
-        - High
-        - Medium
-        - Low
+      description: 1 (highest), 2, 3, 4...
     validations:
       required: true
 

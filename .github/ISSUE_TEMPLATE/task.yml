@@ -7,7 +7,7 @@ body:
     id: id
     attributes:
       label: Task ID
-      description: Unique identifier (e.g. T-001)
+      description: Unique identifier (e.g. T-1)
     validations:
       required: true
 
@@ -15,7 +15,7 @@ body:
     id: parent
     attributes:
       label: Parent User Story
-      description: Link issue number or ID (e.g. #12 or US-001)
+      description: Link issue number or user story title (e.g. #12 or Set up device)
     validations:
       required: true
 
@@ -23,17 +23,17 @@ body:
     id: priority
     attributes:
       label: Priority
-      description: P0 / P1 / P2 / P3
+      description: 1 (highest), 2, 3, 4...
     validations:
       required: true
 
   - type: input
     id: points
     attributes:
-      label: Story Points
-      description: Effort estimate (1,2,3,5)
+      label: Estimate
+      description: Fibonacci scale (1,2,3,5,8,13)
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: description
