@@ -1,14 +1,37 @@
 name: User Story
-description: Create a user story for the product backlog
-title: "[User Story]: "
+description: Product backlog item
+title: "[US]: "
 labels: ["user-story"]
 body:
+  - type: input
+    id: id
+    attributes:
+      label: Story ID
+      description: Unique identifier (e.g. US-001)
+    validations:
+      required: true
+
+  - type: input
+    id: priority
+    attributes:
+      label: Priority
+      description: P0 (highest), P1, P2, P3
+    validations:
+      required: true
+
+  - type: input
+    id: points
+    attributes:
+      label: Story Points
+      description: Fibonacci scale (1,2,3,5,8,13)
+    validations:
+      required: true
+
   - type: textarea
     id: story
     attributes:
       label: User Story
-      description: Describe the feature from the user's perspective
-      placeholder: As a ___, I want ___ so that ___
+      placeholder: As a ___ I want ___ so that ___
     validations:
       required: true
 
@@ -16,15 +39,5 @@ body:
     id: acceptance
     attributes:
       label: Acceptance Criteria
-      description: What must be true for this to be done?
-      placeholder: |
-        - [ ] Condition 1
-        - [ ] Condition 2
     validations:
       required: true
-
-  - type: textarea
-    id: notes
-    attributes:
-      label: Notes / Context
-      description: Optional extra details

@@ -1,20 +1,48 @@
 name: Task
-description: A general task or chore
-labels: ["chore"]
+description: Technical work linked to a user story
+title: "[Task]: "
+labels: ["task"]
 body:
+  - type: input
+    id: id
+    attributes:
+      label: Task ID
+      description: Unique identifier (e.g. T-001)
+    validations:
+      required: true
+
+  - type: input
+    id: parent
+    attributes:
+      label: Parent User Story
+      description: Link issue number or ID (e.g. #12 or US-001)
+    validations:
+      required: true
+
+  - type: input
+    id: priority
+    attributes:
+      label: Priority
+      description: P0 / P1 / P2 / P3
+    validations:
+      required: true
+
+  - type: input
+    id: points
+    attributes:
+      label: Story Points
+      description: Effort estimate (1,2,3,5)
+    validations:
+      required: false
+
   - type: textarea
     id: description
     attributes:
-      label: Description
-      description: What needs to be done and why?
+      label: Task Description
     validations:
       required: true
+
   - type: textarea
-    id: acceptance
+    id: done
     attributes:
-      label: Acceptance Criteria
-      description: How do we know this is done?
-      value: |
-        - [ ]
-    validations:
-      required: false
+      label: Definition of Done
