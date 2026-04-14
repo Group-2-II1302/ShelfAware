@@ -1,4 +1,4 @@
-name: Task
+name: Bug
 description: A general task or chore
 labels: ["chore"]
 body:
