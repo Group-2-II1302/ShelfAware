@@ -22,14 +22,6 @@ Follow the [project workflow](https://github.com/Group-2-II1302/Documentation/bl
 4. **Open a PR** with a Conventional Commits title: `<type> <issue-number>-short-description`
 5. **Get one approval**, then squash-merge
 
-## Backend
-
-### Project structure
-
-```
-
-```
-
 ### Commands
 
 | Command            | What it does                               |
