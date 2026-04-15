@@ -1,17 +1,33 @@
 # ShelfAware
 
-
 ## Structure
 
+**SHOULD BE UPDATED AS PROJECT PROGRESSES**
+
 ```
-backend/
-frontend/
-docs/api/
+ShelfAware/
+├ src/
+│ ├ lib/
+│ │ ├ assets/
+│ │ └ [your lib files]
+│ ├ routes/
+│ │ └ [your routes]
+│ └ app.html
+├ static/
+│ └ [your static assets]
+├ tests/
+│ └ [your tests]
+├ .prettierignore
+├ package.json
+├ package-lock.json
+├ svelte.config.js
+├ tsconfig.json
+└ vite.config.js
 ```
 
 ## Quick start
 
-Once you've cloned the project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+Once you've cloned the project and installed dependencies with `npm install`, start a development server:
 
 ```sh
 npm run dev
