@@ -1,0 +1,22 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+build
+.svelte-kit
+
+# Coverage / test outputs (if you add testing later)
+coverage
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+
+# Optional: OS / editor noise
+.DS_Store
+.vscode
+.idea
