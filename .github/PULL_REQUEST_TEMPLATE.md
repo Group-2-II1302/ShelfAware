@@ -3,7 +3,7 @@
 Link the issue or user story this PR belongs to:
 
 - Closes #
-or
+  or
 - Related to US-XXX
 
 ---
@@ -25,8 +25,7 @@ or
 - [ ] npm run format:check passes
 - [ ] Manual testing done locally
 
-Notes:
--
+## Notes:
 
 ---
 
