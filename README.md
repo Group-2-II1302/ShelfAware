@@ -1,6 +1,17 @@
-## Developing
+# ShelfAware
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+
+## Structure
+
+```
+backend/
+frontend/
+docs/api/
+```
+
+## Quick start
+
+Once you've cloned the project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
 
 ```sh
 npm run dev
@@ -25,3 +36,7 @@ npm run build
 ```
 
 You can preview the production build with `npm run preview`.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, workflow, and team guides.
