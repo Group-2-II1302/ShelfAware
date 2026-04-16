@@ -2,10 +2,12 @@
 
 ## Prerequisites
 
-- [npm] 
+- [npm]
+
 ```bash
 apt install npm
 ```
+
 - **Windows users(who dont have WSL or a ubuntu VM):** use [WSL 2](https://learn.microsoft.com/en-us/windows/wsl/install) and run all commands inside WSL. Docker Desktop integrates with WSL automatically. See the [VS Code WSL guide](https://code.visualstudio.com/docs/remote/wsl) for editor setup.
 
 ## Getting started
