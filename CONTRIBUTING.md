@@ -34,8 +34,6 @@ Follow the [project workflow](https://github.com/Group-2-II1302/Documentation/bl
 | ------------------ | ------------------------------------------ |
 | `npm run dev`      | Start dev server (proxies to real backend) |
 | `npm run preview`  | preview the production build               |
-| `npm run dev:mock` | Start dev server with mock API             |
 | `npm run build`    | Production build                           |
 | `npm run check`    | Type-check                                 |
-| `npm run lint:fix` | Lint + auto-fix                            |
 | `npm run format`   | Format with Prettier                       |
