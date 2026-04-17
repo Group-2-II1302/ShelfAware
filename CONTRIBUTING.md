@@ -30,10 +30,10 @@ Follow the [project workflow](https://github.com/Group-2-II1302/Documentation/bl
 
 ### Commands
 
-| Command            | What it does                               |
-| ------------------ | ------------------------------------------ |
-| `npm run dev`      | Start dev server (proxies to real backend) |
-| `npm run preview`  | preview the production build               |
-| `npm run build`    | Production build                           |
-| `npm run check`    | Type-check                                 |
-| `npm run format`   | Format with Prettier                       |
+| Command           | What it does                               |
+| ----------------- | ------------------------------------------ |
+| `npm run dev`     | Start dev server (proxies to real backend) |
+| `npm run preview` | preview the production build               |
+| `npm run build`   | Production build                           |
+| `npm run check`   | Type-check                                 |
+| `npm run format`  | Format with Prettier                       |
