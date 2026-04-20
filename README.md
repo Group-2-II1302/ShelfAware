@@ -1,4 +1,4 @@
-# ShelfAware 
+# ShelfAware
 
 ## Structure
 
