@@ -1,10 +1,9 @@
-import { supabase } from "$lib/supabaseClient";
 import type { PageServerLoad } from "./$types";
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async ({ locals }) => {
   const startedAt = Date.now();
 
-  const { count, error } = await supabase
+  const { count, error } = await locals.supabase
     .from("shelves")
     .select("*", { count: "exact", head: true });
 
