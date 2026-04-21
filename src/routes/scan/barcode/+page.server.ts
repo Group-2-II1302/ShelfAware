@@ -14,7 +14,7 @@ export const actions: Actions = {
         full_weight_g: Number(formData.get("full_weight_g")) || 0,
       };
 
-      // Log to your WSL terminal so you can see it working
+      // Log to WSL terminal so you can see it working
       console.log("--- MOCK DB SAVE ---");
       console.table(product);
 
@@ -22,7 +22,10 @@ export const actions: Actions = {
       return { success: true };
     } catch (err) {
       console.error("Action error:", err);
-      return { success: false, error: "Server exploded" };
+      return {
+        success: false,
+        error: "An unexpected error occurred. Please try again later.",
+      };
     }
   },
 };
