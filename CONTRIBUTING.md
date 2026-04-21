@@ -1,4 +1,4 @@
-# Contributing to DockPulse
+# Contributing to ShelfAware
 
 ## Prerequisites
 
@@ -12,11 +12,39 @@ apt install npm
 
 ## Getting started
 
+Clone the repo, install dependencies, and open it in your editor:
+
 ```bash
 git clone git@github.com:Group-2-II1302/ShelfAware.git
 cd ShelfAware
+npm install
 code .
 ```
+
+### Environment variables
+
+The app reads its Supabase credentials from a local `.env` file, which is git-ignored. Copy the template and fill in the values before the first `npm run dev`:
+
+```bash
+cp .env.example .env
+```
+
+Then open `.env` and set:
+
+| Variable                   | Where to find it                                             |
+| -------------------------- | ------------------------------------------------------------ |
+| `PUBLIC_SUPABASE_URL`      | Supabase dashboard -> Project Settings -> API -> Project URL |
+| `PUBLIC_SUPABASE_ANON_KEY` | Supabase dashboard -> Project Settings -> API -> `anon` key  |
+
+Ask a teammate if you need the project's current values. The anon key is safe to share inside the team - it's a public key protected by RLS. Do not share or publish keys.
+
+After editing `.env`, regenerate the SvelteKit ambient types so `$env/static/public` picks up the new variables:
+
+```bash
+npm run prepare
+```
+
+If your editor still shows `Module '$env/static/public' has no exported member ...`, restart the TypeScript server (VS Code / Cursor: `Ctrl+Shift+P` -> "TypeScript: Restart TS Server").
 
 ## Development workflow
 
@@ -30,10 +58,11 @@ Follow the [project workflow](https://github.com/Group-2-II1302/Documentation/bl
 
 ### Commands
 
-| Command           | What it does                               |
-| ----------------- | ------------------------------------------ |
-| `npm run dev`     | Start dev server (proxies to real backend) |
-| `npm run preview` | preview the production build               |
-| `npm run build`   | Production build                           |
-| `npm run check`   | Type-check                                 |
-| `npm run format`  | Format with Prettier                       |
+| Command           | What it does                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `npm run dev`     | Start dev server (proxies to real backend)                                                             |
+| `npm run preview` | preview the production build                                                                           |
+| `npm run build`   | Production build                                                                                       |
+| `npm run check`   | Type-check                                                                                             |
+| `npm run format`  | Format with Prettier                                                                                   |
+| `npm run prepare` | Regenerate SvelteKit ambient types (runs automatically on `npm install`; re-run after editing `.env`). |
