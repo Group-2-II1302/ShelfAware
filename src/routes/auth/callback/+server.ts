@@ -1,4 +1,3 @@
-import { redirect } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 
 export const GET: RequestHandler = async ({ url, locals }) => {
@@ -8,9 +7,15 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   if (code) {
     const { error } = await locals.supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      redirect(303, next);
+      return new Response(null, {
+        status: 303,
+        headers: { location: next },
+      });
     }
   }
 
-  redirect(303, "/login?error=oauth");
+  return new Response(null, {
+    status: 303,
+    headers: { location: "/login?error=oauth" },
+  });
 };
