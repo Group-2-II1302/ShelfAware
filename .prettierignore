@@ -20,3 +20,6 @@ coverage
 .DS_Store
 .vscode
 .idea
+
+# Stylesheet
+stylesheet.css

@@ -1,0 +1,12 @@
+@import url("https://fonts.googleapis.com/css2?family=Cascadia+Mono:ital,wght@0,200..700;1,200..700&display=swap");
+:root {
+  --background: #F4F1F0;
+}
+
+* {
+  font-family: "Cascadia Mono", monospace;
+}
+
+body {
+  background: var(--background);
+}/*# sourceMappingURL=stylesheet.css.map */
