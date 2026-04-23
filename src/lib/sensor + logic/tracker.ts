@@ -12,7 +12,7 @@ let pendningRM = null;
 let RMTimer = null;
 
 const THRESHOLD = 0.05;
-const mvTimer = 2000; // ms
+const mvTime = 800; // ms
 
 export function updateTracker() {
     const { F1, F2, F3 } = get(sensorData);
@@ -23,19 +23,29 @@ export function updateTracker() {
     if (!currPC) return;
 
     PC.set(currPC);
-    const deltaF = currPC.total - lastPC;
 
-    // Item added case (time buffer to-be-added)
-    if (deltaF > THRESHOLD && pendingScan) {
-        handleAdd(pendingId, currPC, deltaF);
-        pendingScan.set(null);
+    if (!lastPC) {
+        lastPC = currPC;
+        lastTotal = currPC.total;
+        return;
     }
 
-    // Item removed case (time buffer to-be-added)
-    if (deltaF < -THRESHOLD) {
-        handleRemove(Math.abs(deltaF));
-    }
+    const deltaF = currPC.total - lastTotal;
 
+    // Item added case
+    if (deltaF > THRESHOLD) {
+        if (pendningRM) {
+            handleMAL(currPC, pendningRM.weight);
+            clearPendingRM();
+        } else if (pendingId) {
+            handleAdd(pendingId, currPC, deltaF);
+            pendingScan.set(null);
+        }
+    }
+    // removes an item after a small amount of time, otherwise regards it as moved
+    else if (deltaF < THRESHOLD) {
+        handlePotentialRemove(Math.abs(deltaF));
+    }
     // Item moved case (fell over, moved by another item or a person briefly lifts an item and places it somehwere else)
     else {
         handleMove(currPC);
@@ -50,7 +60,7 @@ export function handleAdd(id, currentPC, dF) {
         ...list,
         {
             id,
-            dF,
+            weight: dF,
             position: {
                 x: currentPC.x,
                 y: currentPC.y
@@ -59,7 +69,51 @@ export function handleAdd(id, currentPC, dF) {
     ]);
 }
 
-export function handleRemove(rmDF) {
+export function handlePotentialRemove(weight) {
+    if (RMTimer) {
+        clearTimeout(RMTimer);
+    }
+
+    pendningRM = {
+        weight,
+        timestamp: Date.now()
+    };
+
+    RMTimer = setTimeout(() => {
+        handleRemove();
+    }, mvTime);
+}
+
+export function handleMAL(currPC, weight) {
+    Items.update(list => {
+        if (list.length === 0) return list;
+        
+        let bestIndex = 0;
+        let bestDiff = Infinity;
+
+        for (let i = 0; i < list.length; i++) {
+            const diff = Math.abs(list[i].weight - weight);
+
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestIndex = i;
+            }
+        }
+
+        list[bestIndex].position = {
+            x: currPC.x,
+            y: currPC.y
+        };
+
+        return [...list];
+    });
+}
+
+export function handleRemove() {
+    if (!pendningRM) return;
+
+    const weight = pendningRM.weight;
+
     Items.update(list => {
         if (list.length === 0) return list;
 
@@ -67,7 +121,7 @@ export function handleRemove(rmDF) {
         let bestDiff = Infinity;
 
         for (let i = 0; i < list.length; i++) {
-            const diff = Math.abs(list[i].weight - rmDF);
+            const diff = Math.abs(list[i].weight - weight);
 
             if (diff < bestDiff) {
                 bestDiff = diff;
@@ -78,9 +132,12 @@ export function handleRemove(rmDF) {
         list.splice(bestIndx, 1);
         return [...list];
     });
+
+    clearPendingRM();
 }
 
 export function handleMove(PC) {
+    if (pendningRM) return;
     if (!lastPC) return;
 
     const movement = Math.hypot(
@@ -100,7 +157,7 @@ export function handleMove(PC) {
             const itm = list[i];
 
             const dist = Math.hypot(
-                itm.position.x - - PC.x,
+                itm.position.x - PC.x,
                 itm.position.y - PC.y
             );
 
@@ -117,4 +174,13 @@ export function handleMove(PC) {
 
         return [...list];
     });
+}
+
+function clearPendingRM() {
+    pendningRM = null;
+
+    if (RMTimer) {
+        clearTimeout(RMTimer);
+        RMTimer = null;
+    }
 }
