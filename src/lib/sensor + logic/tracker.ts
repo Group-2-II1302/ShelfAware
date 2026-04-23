@@ -55,12 +55,12 @@ export function updateTracker() {
     lastTotal = currPC.total;
 }
 
-export function handleAdd(id, currentPC, dF) {
+export function handleAdd(id, currentPC, weight) {
     Items.update(list => [
         ...list,
         {
             id,
-            weight: dF,
+            weight,
             position: {
                 x: currentPC.x,
                 y: currentPC.y
