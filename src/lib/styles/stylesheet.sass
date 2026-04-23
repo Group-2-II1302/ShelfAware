@@ -1,0 +1,188 @@
+@import url('https://fonts.googleapis.com/css2?family=Cascadia+Mono:ital,wght@0,200..700;1,200..700&display=swap')
+
+:root
+    --background: #F4F1F0
+    --text: #332A26
+    --border: #ccc
+    --surface: #fff
+    --error: #a40000
+    --success-bg: #eef6ee
+    --success-border: #b8d4b8
+    --accent: #332A26
+    --accent-contrast: #F4F1F0
+
+*
+    font-family: 'Cascadia Mono', monospace
+    color: var(--text)
+
+body
+    background: var(--background)
+
+.app-shell
+    display: contents
+
+// --- Navigation ---
+.navbar
+    display: flex
+    padding: 10px
+    align-items: center
+
+.navbar-brand
+    margin: 0 auto
+    font-family: monospace
+
+.navbar-profile
+    display: flex
+    align-items: center
+
+// --- Home shelf list ---
+.shelf-list
+    list-style: none
+    padding: 0
+
+.shelf-list__item
+    border: 1px solid var(--border)
+    padding: 10px
+    margin: 10px 0
+
+.shelf-list__link
+    text-decoration: none
+    color: inherit
+    display: block
+
+// --- Auth (login) ---
+.auth-main
+    min-height: 100vh
+    display: flex
+    align-items: center
+    justify-content: center
+    padding: 1.5rem
+
+.auth-card
+    width: 100%
+    max-width: 24rem
+    padding: 1.75rem
+    border: 1px solid var(--border)
+    border-radius: 8px
+    background: var(--surface)
+
+.auth-card__title
+    margin: 0 0 1rem
+    font-size: 1.25rem
+
+.auth-card__intro
+    margin: 0 0 1.25rem
+    opacity: 0.85
+
+.auth-notice
+    margin: 0 0 1rem
+    padding: 0.65rem 0.75rem
+    background: var(--success-bg)
+    border: 1px solid var(--success-border)
+    border-radius: 4px
+    font-size: 0.875rem
+
+.stack-form
+    display: flex
+    flex-direction: column
+    gap: 0.75rem
+
+.field
+    display: flex
+    flex-direction: column
+    gap: 0.35rem
+    font-size: 0.875rem
+
+.field-hint
+    opacity: 0.7
+
+.input
+    padding: 0.5rem 0.6rem
+    border: 1px solid var(--border)
+    border-radius: 4px
+    font: inherit
+
+.alert
+    margin: 0
+    font-size: 0.875rem
+
+.alert--error
+    color: var(--error)
+
+.btn-primary
+    margin-top: 0.25rem
+    padding: 0.55rem 0.75rem
+    font: inherit
+    cursor: pointer
+    border: 1px solid var(--accent)
+    background: var(--accent)
+    color: var(--accent-contrast)
+    border-radius: 4px
+
+.btn-primary:disabled
+    cursor: not-allowed
+    opacity: 0.7
+
+.btn-google
+    margin-top: 0.5rem
+    padding: 0.55rem 0.75rem
+    font: inherit
+    cursor: pointer
+    display: flex
+    align-items: center
+    justify-content: center
+    gap: 0.625rem
+    width: 100%
+    border: 1px solid #dadce0
+    background: #ffffff
+    color: #3c4043
+    border-radius: 4px
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease
+
+.btn-google:hover:not(:disabled)
+    background: var(--background)
+    box-shadow: 0 1px 2px rgba(60, 64, 67, 0.15)
+
+.btn-google:active:not(:disabled)
+    background: #f1f3f4
+
+.btn-google:disabled
+    cursor: not-allowed
+    opacity: 0.7
+
+.btn-google__icon
+    width: 18px
+    height: 18px
+    flex-shrink: 0
+
+.auth-switch
+    margin: 1rem 0 0
+    font-size: 0.875rem
+
+.link-button
+    font: inherit
+    background: none
+    border: none
+    padding: 0
+    cursor: pointer
+    text-decoration: underline
+    color: inherit
+
+// --- Profile ---
+.profile-actions
+    display: flex
+    flex-wrap: wrap
+    gap: 0.75rem
+    margin-top: 1rem
+
+.profile-actions button
+    font: inherit
+    cursor: pointer
+    padding: 0.45rem 0.75rem
+    border: 1px solid var(--border)
+    border-radius: 4px
+    background: var(--surface)
+
+.profile-actions button:disabled
+    cursor: not-allowed
+    opacity: 0.7

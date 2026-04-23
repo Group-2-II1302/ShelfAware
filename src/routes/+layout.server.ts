@@ -1,9 +1,23 @@
+import { redirect } from "@sveltejs/kit";
 import type { LayoutServerLoad } from "./$types";
 
-export const load: LayoutServerLoad = async ({ locals, cookies }) => {
+const isLoginPath = (pathname: string) =>
+  pathname === "/login" || pathname.startsWith("/login/");
+
+export const load: LayoutServerLoad = async ({ cookies, locals, url }) => {
+  const {
+    data: { user },
+  } = await locals.supabase.auth.getUser();
+
+  if (!user && !isLoginPath(url.pathname)) {
+    redirect(303, "/login");
+  }
+
+  if (user && isLoginPath(url.pathname)) {
+    redirect(303, "/");
+  }
+
   return {
-    session: locals.session,
-    user: locals.user,
     cookies: cookies.getAll(),
   };
 };
