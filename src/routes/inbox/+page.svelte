@@ -6,7 +6,7 @@
 <button
   onclick={function () {
     history.back();
-  }}>Back to home</button
+  }}>Back</button
 >
 
 <ul>
