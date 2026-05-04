@@ -27,7 +27,7 @@ export async function load() {
     item_id: string;
     alert_type: string;
     last_triggered_at: string;
-    }[] = [];
+  }[] = [];
   (itemsRes.data ?? []).forEach(function (item) {
     if (item.expiry_date) {
       const diff = Math.ceil(
