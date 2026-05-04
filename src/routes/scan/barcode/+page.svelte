@@ -1,5 +1,6 @@
 <script lang="ts">
     import { enhance } from '$app/forms';
+    import { goto } from '$app/navigation';
     import BarcodeScanner from '$lib/components/BarcodeScanner.svelte';
     
     type ProductCatalogEntry = {
@@ -12,61 +13,60 @@
 
     let foundProduct = $state<ProductCatalogEntry | null>(null);
     let isFetching = $state(false);
-    let errorMessage = $state<string | null>(null);
+    let isSaving = $state(false);
     let formElement = $state<HTMLFormElement | null>(null);
-    let currentScanId = 0;
+
+    const handleManualSave = (manualData: any) => {
+        foundProduct = {
+            barcode: manualData.barcode,
+            product_name: manualData.product_name,
+            brand: manualData.brand || 'Generic',
+            image_url: manualData.image_url || '',
+            full_weight_g: manualData.full_weight_g || 0
+        };
+    };
 
     $effect(() => {
-        if (foundProduct && !isFetching) {
+        if (foundProduct && !isFetching && !isSaving) {
             setTimeout(() => { formElement?.requestSubmit(); }, 50);
         }
     });
 
-    // Explicitly typing as (barcode: string) => Promise<void>
-    const handleScan = async (barcode: string): Promise<void> => {
-        const scanId = ++currentScanId;
+    const handleScan = async (barcode: string) => {
         isFetching = true;
-        errorMessage = null;
-
         try {
             const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
             const data = await res.json();
-
-            if (scanId !== currentScanId) return;
-
-            if (data.status === 1 && data.product) {
+            if (data.status === 1) {
                 const p = data.product;
                 foundProduct = {
                     barcode: data.code,
-                    product_name: p.product_name || p.generic_name || 'Unknown',
+                    product_name: p.product_name || 'Unknown',
                     brand: p.brands || 'Unknown',
                     image_url: p.image_front_url || '',
-                    full_weight_g: Number(p.net_weight_value || p.product_quantity || 0)
+                    full_weight_g: Number(p.net_weight_value || 0)
                 };
             } else {
-                errorMessage = "Product not found.";
+                // If not in OpenFoodFacts, go to manual entry with just the barcode
+                foundProduct = { barcode, product_name: '', brand: '', image_url: '', full_weight_g: 0 };
             }
         } catch (e) {
-            if (scanId === currentScanId) errorMessage = "Network error.";
+            console.error(e);
         } finally {
-            if (scanId === currentScanId) isFetching = false;
+            isFetching = false;
         }
     };
-
-    function reset() {
-        foundProduct = null;
-        errorMessage = null;
-        isFetching = false;
-    }
 </script>
 
 <div class="scan-page">
     {#if !foundProduct && !isFetching}
-        <BarcodeScanner onscan={handleScan} />
+        <BarcodeScanner onscan={handleScan} onManualSave={handleManualSave} />
     {/if}
 
-    {#if isFetching || foundProduct}
-        <p>{isFetching ? 'Fetching...' : 'Saving...'}</p>
+    {#if isFetching || isSaving || foundProduct}
+        <div style="text-align: center; padding: 2rem;">
+            <p>{isFetching ? 'Searching Catalog...' : 'Saving to Shelf...'}</p>
+        </div>
     {/if}
 
     <form 
@@ -74,8 +74,13 @@
         method="POST" 
         action="?/saveProduct" 
         use:enhance={() => {
+            isSaving = true;
             return async ({ result }) => {
-                if (result.type === 'success') reset();
+                if (result.type === 'success') {
+                    // ONLY navigate once we know the DB is updated
+                    goto(`/scan/ocr?barcode=${foundProduct?.barcode}`);
+                }
+                isSaving = false;
             };
         }}
         style="display: none;"

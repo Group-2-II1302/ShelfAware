@@ -1,26 +1,32 @@
 import type { Actions } from "./$types";
+import { fail } from "@sveltejs/kit";
 
 export const actions: Actions = {
-  saveExpiry: async ({ request }) => {
-    try {
-      const formData = await request.formData();
-      const expiryDate = formData.get("expiry_date") as string;
+  saveExpiry: async ({ request, locals: { supabase } }) => {
+    const formData = await request.formData();
+    
+    const expiry_date = formData.get("expiry_date") as string;
+    const barcode = formData.get("barcode") as string;
 
-      // ====== Mock Database Persistence ======
-      // The terminal-logging
-      console.log("\n--- MOCK DB SAVE (OCR) ---");
-      console.table({
-        type: "EXPIRY_SCAN",
-        date: expiryDate,
-        timestamp: new Date().toISOString(),
-        status: "LOCAL_PERSISTENCE_VERIFIED",
-      });
-      console.log("--------------------------\n");
-
-      return { success: true };
-    } catch (err) {
-      console.error("Action error:", err);
-      return { success: false };
+    if (!expiry_date || !barcode) {
+      return fail(400, { error: "Missing date or barcode" });
     }
+
+    // 1. Format conversion: DD-MM-YYYY -> YYYY-MM-DD
+    const [d, m, y] = expiry_date.split('-');
+    const postgresDate = `${y}-${m}-${d}`;
+
+    // 2. UPDATE existing row in shelf_items
+    const { error } = await supabase
+      .from('shelf_items')
+      .update({ expiry_date: postgresDate })
+      .eq('barcode', barcode); 
+
+    if (error) {
+      console.error("Supabase Error:", error.message);
+      return fail(500, { error: "Database update failed" });
+    }
+
+    return { success: true };
   },
 };
