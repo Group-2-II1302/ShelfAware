@@ -4,31 +4,55 @@ export async function load() {
   const now = new Date();
   const todayISO = now.toISOString().split("T")[0];
   const startOfToday = new Date(todayISO).getTime();
+
   const [itemsRes, sentTodayRes] = await Promise.all([
-    supabase.from("shelf_items").select("id, expiry_date, barcode"),
+    supabase
+      .from("shelf_items")
+      .select(
+        "id, expiry_date, barcode, current_weight_g, low_stock_threshold_g",
+      ),
     supabase
       .from("alerts")
-      .select("item_id")
+      .select("item_id, alert_type")
       .gte("last_triggered_at", todayISO),
   ]);
 
-  const sentIds = new Set((sentTodayRes.data ?? []).map((s) => s.item_id));
+  const sentToday = new Set(
+    (sentTodayRes.data ?? []).map(function (s) {
+      return s.item_id + "-" + s.alert_type;
+    }),
+  );
 
-  const toInsert = (itemsRes.data ?? [])
-    .filter(function (item) {
-      if (!item.expiry_date) return false;
+  const toInsert: {
+    item_id: string;
+    alert_type: string;
+    last_triggered_at: string;
+    }[] = [];
+  (itemsRes.data ?? []).forEach(function (item) {
+    if (item.expiry_date) {
       const diff = Math.ceil(
         (new Date(item.expiry_date).getTime() - startOfToday) / 86400000,
       );
-      return diff <= 2 && !sentIds.has(item.id);
-    })
-    .map(function (item) {
-      return {
+      if (diff <= 2 && !sentToday.has(item.id + "-EXPIRY")) {
+        toInsert.push({
+          item_id: item.id,
+          alert_type: "EXPIRY",
+          last_triggered_at: now.toISOString(),
+        });
+      }
+    }
+
+    if (
+      item.current_weight_g <= item.low_stock_threshold_g &&
+      !sentToday.has(item.id + "-LOWSTOCK")
+    ) {
+      toInsert.push({
         item_id: item.id,
-        alert_type: "EXPIRY",
+        alert_type: "LOWSTOCK",
         last_triggered_at: now.toISOString(),
-      };
-    });
+      });
+    }
+  });
 
   if (toInsert.length > 0) await supabase.from("alerts").insert(toInsert);
 
@@ -41,30 +65,35 @@ export async function load() {
 
   return {
     notifications: (alerts ?? []).map(function (n: any) {
-      const shelf = n.shelf_items;
-      let msg = n.alert_type;
-
-      if (shelf) {
-        const diff = Math.ceil(
-          (new Date(shelf.expiry_date).getTime() - startOfToday) / 86400000,
-        );
-        const status =
-          diff < 0
-            ? "expired"
-            : diff === 0
-              ? "expires today"
-              : "expires in " + diff + " day(s)";
-        msg =
-          (shelf.product_catalog?.product_name || shelf.barcode) + " " + status;
-      }
-
       return {
         id: n.id,
-        message: msg,
+        message: formatMessage(n, startOfToday),
         timestamp: formatRelative(n.last_triggered_at),
       };
     }),
   };
+}
+
+function formatMessage(n: any, startOfToday: number) {
+  const shelf = n.shelf_items;
+  if (!shelf) return n.alert_type;
+
+  const name = shelf.product_catalog?.product_name || shelf.barcode;
+
+  if (n.alert_type === "LOWSTOCK") {
+    return name + " is running low";
+  }
+
+  const diff = Math.ceil(
+    (new Date(shelf.expiry_date).getTime() - startOfToday) / 86400000,
+  );
+  const status =
+    diff < 0
+      ? "expired"
+      : diff === 0
+        ? "expires today"
+        : "expires in " + diff + " day(s)";
+  return name + " " + status;
 }
 
 function formatRelative(dateStr: string) {
