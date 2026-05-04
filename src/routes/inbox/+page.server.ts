@@ -1,61 +1,79 @@
 import { supabase } from "$lib/supabaseClient";
 
-export const load = async () => {
-  const { data: items, error: itemsError } = await supabase
-    .from("shelf_items")
-    .select("id, expiry_date, barcode");
-  
-  console.log("--- Supabase Debug ---");
-  console.log("Raw Items from DB:", items);
-  if (itemsError) console.error("Error fetching items:", itemsError.message);
+export async function load() {
+  const now = new Date();
+  const todayISO = now.toISOString().split("T")[0];
+  const startOfToday = new Date(todayISO).getTime();
+  const [itemsRes, sentTodayRes] = await Promise.all([
+    supabase.from("shelf_items").select("id, expiry_date, barcode"),
+    supabase
+      .from("alerts")
+      .select("item_id")
+      .gte("last_triggered_at", todayISO),
+  ]);
 
-  const today = new Date().toISOString().split('T')[0];
+  const sentIds = new Set((sentTodayRes.data ?? []).map((s) => s.item_id));
 
-  const { data: sentToday } = await supabase.from("alerts")
-    .select("item_id")
-    .gte("last_triggered_at", today);
-    
-  console.log("Alert IDs already sent today:", sentToday?.map(s => s.item_id));
-
-  const toInsert = (items ?? [])
-    .filter(item => {
+  const toInsert = (itemsRes.data ?? [])
+    .filter(function (item) {
       if (!item.expiry_date) return false;
-      
-      const diff = new Date(item.expiry_date).getTime() - new Date().getTime();
-      const days = Math.floor(diff / 86400000);
-      const alreadySent = sentToday?.some(s => s.item_id === item.id);
-      
-      const shouldTrigger = days <= 2 && !alreadySent;
-      
-      if (shouldTrigger) {
-        console.log(`Triggering alert for ${item.barcode}: ${days} days remaining.`);
-      }
-      
-      return shouldTrigger;
+      const diff = Math.ceil(
+        (new Date(item.expiry_date).getTime() - startOfToday) / 86400000,
+      );
+      return diff <= 2 && !sentIds.has(item.id);
     })
-    .map(item => ({
-      item_id: item.id,
-      alert_type: "EXPIRY",
-      last_triggered_at: new Date().toISOString()
-    }));
+    .map(function (item) {
+      return {
+        item_id: item.id,
+        alert_type: "EXPIRY",
+        last_triggered_at: now.toISOString(),
+      };
+    });
 
-  if (toInsert.length > 0) {
-    console.log("Inserting new alerts:", toInsert);
-    const { error: insError } = await supabase.from("alerts").insert(toInsert);
-    if (insError) console.error("Insert failed:", insError.message);
-  } else {
-    console.log("No new alerts to insert.");
-  }
+  if (toInsert.length > 0) await supabase.from("alerts").insert(toInsert);
 
-  // 4. Final fetch for the UI
-  const { data: alerts, error: alertsError } = await supabase
+  const { data: alerts } = await supabase
     .from("alerts")
-    .select("*, shelf_items(barcode, expiry_date)")
+    .select(
+      "*, shelf_items(barcode, expiry_date, product_catalog(product_name))",
+    )
     .order("last_triggered_at", { ascending: false });
 
-  if (alertsError) console.error("Fetch alerts error:", alertsError.message);
-  console.log("Final notifications sent to UI:", alerts);
-  console.log("----------------------");
+  return {
+    notifications: (alerts ?? []).map(function (n: any) {
+      const shelf = n.shelf_items;
+      let msg = n.alert_type;
 
-  return { notifications: alerts ?? [] };
-};
+      if (shelf) {
+        const diff = Math.ceil(
+          (new Date(shelf.expiry_date).getTime() - startOfToday) / 86400000,
+        );
+        const status =
+          diff < 0
+            ? "expired"
+            : diff === 0
+              ? "expires today"
+              : "expires in " + diff + " day(s)";
+        msg =
+          (shelf.product_catalog?.product_name || shelf.barcode) + " " + status;
+      }
+
+      return {
+        id: n.id,
+        message: msg,
+        timestamp: formatRelative(n.last_triggered_at),
+      };
+    }),
+  };
+}
+
+function formatRelative(dateStr: string) {
+  if (!dateStr) return "Unknown date";
+  const delta = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (delta < 60) return "just now";
+  const mins = Math.floor(delta / 60);
+  if (mins < 60) return mins + " minutes ago";
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + " hours ago";
+  return new Date(dateStr).toLocaleDateString();
+}
