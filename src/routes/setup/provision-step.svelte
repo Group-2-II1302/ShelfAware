@@ -43,7 +43,10 @@
     } catch (e: any) {
         setupState.update(s => ({
             ...s,
-            error: "Provisioning failed",
+            error:
+                e?.message === "Already provisioned"
+                ? "This device is already set up"
+                : "Provisioning failed",
             loading: false
         }));
     }

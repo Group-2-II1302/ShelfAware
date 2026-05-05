@@ -3,8 +3,6 @@
   import { checkHealth } from "../../lib/pi";
   import ErrorBanner from "../../lib/components/ErrorBanner.svelte";
 
-  let error = "";
-
   async function continueSetup() {
     setupState.update(s => ({
         ...s,
@@ -18,6 +16,7 @@
         if (health.already_provisioned) {
             setupState.update(s => ({
                 ...s,
+                loading: false,
                 error: "Device is already set up. Please reset it first."
             }));
             return;
@@ -50,5 +49,3 @@
 <button on:click={continueSetup} disabled={$setupState.loading}>
   {$setupState.loading ? "Checking..." : "Continue"}
 </button>
-
-{#if error}<p>{error}</p>{/if}

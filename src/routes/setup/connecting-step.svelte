@@ -11,7 +11,6 @@
   onMount(() => {
     let isDone = false;
     let timeoutId: ReturnType<typeof setTimeout>;
-    let channel: any;
 
     async function init() {
         const { shelfId } = get(setupState);
@@ -23,65 +22,63 @@
             }));
             return
         }
+
+        const { data: session } = await supabase.auth.getSession();
+
+        const jwt = session.session?.access_token;
+
+        const headers = {
+            Authorization: `Bearer ${jwt}`
+        };
     
         try {
-            const shelf = await getShelf(shelfId);
+            const before = await fetch("/api/shelves", { headers }).then(r => r.json());
+            const baseline = new Set(
+                before.shelves.map((s: any) => s.shelf_id)
+            );
 
-            if (shelf.last_seen) {
-                isDone = true;
-
-                setupState.update(s => ({
-                    ...s,
-                    step: "success"
-                }));
-
-                return;
-            }
-        } catch (e) {
-            console.warn("Inital shelf check failed", e);
-        }
-    
-        timeoutId = setTimeout(() => {
-            if (!isDone) {
-                setupState.update(s => ({
-                    ...s,
-                    error: "Device connection timed out"
-                }));
-            }
-        }, TIMEOUT);
-    
-        channel = supabase
-        .channel("shelves-setup")
-        .on(
-            "postgres_changes",
-            {
-                event: "UPDATE",
-                schema: "public",
-                table: "shelves",
-                filter: `id=eq.${shelfId}`
-                },
-                (payload) => {
-                const shelf = payload.new;
-
-                if (shelf.last_seen && !isDone) {
-                    isDone = true;
-                    clearTimeout(timeoutId);
-
+            timeoutId = setTimeout(() => {
+                if (!isDone) {
                     setupState.update(s => ({
                         ...s,
-                        step: "success"
+                        error: "Device connection timed out"
                     }));
                 }
-            }
-        )
-        .subscribe((status) => {
-            if (status === "CHANNEL_ERROR") {
-                setupState.update(s => ({
-                    ...s,
-                    error: "Realtime connection failed"
-                }));
-            }
-        });
+            }, TIMEOUT);
+
+            const poll = async () => {
+                while (!isDone) {
+                    const now = await fetch("/api/shelves", {headers }).then(r => r.json());
+
+                    const fresh = now.shelves.find(
+                        (s: any) => !baseline.has(s.shelf_id)
+                    );
+
+                    if (fresh) {
+                        isDone = true;
+                        clearTimeout(timeoutId);
+
+                        setupState.update(s => ({
+                            ...s,
+                            shelfId: fresh.shelf_id,
+                            step: "success"
+                        }));
+
+                        return;
+                    }
+
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+            };
+
+            poll();
+
+        } catch (e) {
+            setupState.update(s => ({
+                ...s,
+                error: "Failed to poll shelves"
+            }));
+        }
     }
 
     init();
@@ -89,7 +86,6 @@
     return () => {
         isDone = true;
         if (timeoutId) clearTimeout(timeoutId);
-        if (channel) supabase.removeChannel(channel);
     };
   });
 </script>
