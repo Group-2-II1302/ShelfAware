@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { setupState } from "$lib/stores";
+  import { setupState } from "$lib/setup/stores";
   import { supabase } from "../../lib/supabaseClient";
   import ErrorBanner from "../../lib/components/ErrorBanner.svelte";
 
@@ -19,7 +19,7 @@
         setupState.update(s => ({
             ...s,
             step: "waiting",
-            error: null
+            error: undefined
         }));
 
         try {
