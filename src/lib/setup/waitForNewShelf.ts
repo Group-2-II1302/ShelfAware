@@ -33,6 +33,10 @@ export async function waitForNewShelf(
     const baseline = new Set(beforeData.shelves.map(s => s.shelf_id));
 
     // Polling loop
+    const setupStartedAt = Date.now();
+
+    await sleep(2000);
+
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -45,10 +49,13 @@ export async function waitForNewShelf(
 
         const data: { shelves: Shelf[] } = await res.json();
 
-        // 3. Find new shelf
-        const fresh = data.shelves.find(
-        s => !baseline.has(s.shelf_id)
-        );
+        // Find new shelf
+        const fresh = data.shelves.find((s) => {
+            return (
+                !baseline.has(s.shelf_id) &&
+                new Date(s.created_at).getTime() >= setupStartedAt
+            );
+    });
 
         if (fresh) {
         return fresh.shelf_id;
