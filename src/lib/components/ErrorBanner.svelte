@@ -8,7 +8,7 @@
   <div class="error-banner">
     <p>{message}</p>
 
-    <button on:click={() => setupState.update(s => ({...s, error: undefined}))}>
+    <button onclick={() => setupState.update(s => ({...s, error: undefined}))}>
         Dismiss
     </button>
 

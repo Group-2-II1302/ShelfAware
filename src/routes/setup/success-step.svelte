@@ -16,4 +16,4 @@
 </script>
 
 <h2>Device Connected Successfully</h2>
-<button on:click={finish}>Go to Shelf</button>
+<button onclick={finish}>Go to Shelf</button>
