@@ -1,45 +1,111 @@
-import type { Actions } from "./$types";
-import { fail } from "@sveltejs/kit";
+import type { Actions, PageServerLoad } from "./$types";
+import { fail, redirect } from "@sveltejs/kit";
+
+/**
+ * Ensures the page has the context required by the Shelves Contract.
+ * Uses the standard client authentication check.
+ */
+export const load: PageServerLoad = async ({ url, locals }) => {
+    const shelf_id = url.searchParams.get("shelf_id");
+    const slot = url.searchParams.get("slot");
+
+    // Fallback safe check: Get the user session using the standard auth helper
+    const { data: { session } } = await locals.supabase.auth.getSession();
+
+    return {
+        shelf_id,
+        slot,
+        isAuthenticated: !!session
+    };
+};
 
 export const actions: Actions = {
-  saveProduct: async ({ request, locals: { supabase } }) => {
-    const formData = await request.formData();
-    const barcode = formData.get("barcode") as string;
-    const product_name = formData.get("product_name") as string;
+    saveProduct: async ({ request, locals }) => {
+        // Authenticated client carrying the user's JWT
+        const { supabase } = locals;
+        
+        // Double-check authentication for safety
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+            return fail(401, { error: "Unauthorized. Please log in first." });
+        }
 
-    if (!barcode || !product_name) {
-      console.error("Save failed: Missing barcode or name");
-      return fail(400, { error: "Missing data" });
-    }
+        const formData = await request.formData();
 
-    // 1. Save to Product Catalog
-    const { error: catError } = await supabase
-      .from('product_catalog')
-      .upsert({
-        barcode,
-        product_name,
-        brand: formData.get("brand"),
-        image_url: formData.get("image_url"),
-        full_weight_g: parseFloat(formData.get("full_weight_g") as string) || 0,
-        unit: 'g'
-      }, { onConflict: 'barcode' });
+        // 1. Extraction & Sanitization
+        const barcode = formData.get("barcode")?.toString().trim();
+        const product_name = formData.get("product_name")?.toString().trim();
+        const brand = formData.get("brand")?.toString().trim() || null;
+        const image_url = formData.get("image_url")?.toString().trim() || null;
+        const full_weight_g_raw = formData.get("full_weight_g")?.toString();
+        const shelf_id = formData.get("shelf_id")?.toString().trim();
+        const scale_index_raw = formData.get("scale_index")?.toString();
 
-    if (catError) {
-      console.error("Catalog Error:", catError.message);
-      return fail(500, { error: catError.message });
-    }
+        // 2. The "Shelves Contract" Guard Clauses
+        if (!barcode || !product_name) {
+            return fail(400, { error: "Barcode and Product Name are mandatory." });
+        }
+        if (!shelf_id || !scale_index_raw) {
+            return fail(400, { error: "Context missing: shelf_id or slot (scale_index) not provided." });
+        }
 
-    // 2. Initialize the item on the shelf
-    const { error: itemError } = await supabase
-      .from('shelf_items')
-      .upsert({ barcode }, { onConflict: 'barcode' });
+        const scale_index = parseInt(scale_index_raw, 10);
+        const full_weight_g = parseFloat(full_weight_g_raw || "0") || 0;
 
-    if (itemError) {
-      console.error("Shelf Error:", itemError.message);
-      return fail(500, { error: itemError.message });
-    }
+        if (isNaN(scale_index) || scale_index < 0) {
+            return fail(400, { error: "Invalid scale_index. Must be a non-negative integer." });
+        }
 
-    console.log("Save successful for barcode:", barcode);
-    return { success: true };
-  },
+        // 3. STEP 1: Upsert to product_catalog (Global Metadata)
+        const { error: catError } = await supabase
+            .from("product_catalog")
+            .upsert(
+                {
+                    barcode,
+                    product_name,
+                    brand,
+                    image_url,
+                    full_weight_g,
+                    unit: "g",
+                },
+                { onConflict: "barcode" }
+            );
+
+        if (catError) {
+            console.error("Schema or RLS Error in product_catalog:", catError.message);
+            return fail(500, { error: `Catalog Save Failed: ${catError.message}` });
+        }
+
+        // 4. STEP 2: Link product to the shelf slot
+        // Workaround for missing composite unique constraint: Clear existing item first, then insert.
+        const { error: deleteError } = await supabase
+            .from("shelf_items")
+            .delete()
+            .eq("shelf_id", shelf_id)
+            .eq("scale_index", scale_index);
+
+        if (deleteError) {
+            console.error("Failed to clear existing slot:", deleteError.message);
+            return fail(500, { error: "Database failed to clear the current shelf slot." });
+        }
+
+        const { error: insertError } = await supabase
+            .from("shelf_items")
+            .insert({
+                shelf_id,
+                scale_index,
+                barcode,
+            });
+
+        if (insertError) {
+            console.error("Database rejected shelf_items assignment:", insertError.message);
+            return fail(500, { error: "Database failed to link product to slot." });
+        }
+
+        // 5. THE REDIRECT PLAY: Smoothly transition to the OCR scanner with full context parameters!
+        throw redirect(
+            303, 
+            `/scan/ocr?shelf_id=${encodeURIComponent(shelf_id)}&slot=${encodeURIComponent(scale_index)}&barcode=${encodeURIComponent(barcode)}`
+        );
+    },
 };

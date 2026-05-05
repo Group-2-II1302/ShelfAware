@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { Html5Qrcode } from 'html5-qrcode';
-
+  
   export interface ScannerProps {
     onscan: (barcode: string) => void | Promise<void>;
     onManualSave: (data: any) => void;
