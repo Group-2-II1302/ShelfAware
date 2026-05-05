@@ -4,7 +4,7 @@
     import SuccessStep from "./success-step.svelte";
     import ErrorBanner from "../../lib/components/ErrorBanner.svelte";
 
-  $: step = $setupState.step;
+  const step = $derived($setupState.step)
 </script>
 
 {#if step === "idle"}
