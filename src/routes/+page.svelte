@@ -1,9 +1,3 @@
-<script>
-  import Menu from '$lib/components/Menu.svelte'
-  import Navbar from '$lib/components/Navbar.svelte'
-</script>
-
-<Navbar />
 <h1>welcome to shelfAware</h1>
 <p>your shelves</p>
 
@@ -20,4 +14,3 @@
     </a>
   </li>
 </ul>
-<Menu />
