@@ -1,11 +1,16 @@
 <script lang="ts">
-  import { setupState } from "../../lib/stores";
+  import { setupState } from "../../lib/setup/stores";
   import { get } from "svelte/store";
   import { goto } from "$app/navigation";
 
-  const { shelfId } = get(setupState);
-
   function finish() {
+    const { shelfId } = get(setupState);
+
+    if (!shelfId) {
+        console.error("Missing shelfId");
+        return;
+    }
+    
     goto(`/shelves/${shelfId}`);
   }
 </script>

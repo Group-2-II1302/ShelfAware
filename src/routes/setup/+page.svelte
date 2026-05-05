@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { setupState } from "../../lib/stores";
+  import { setupState } from "../../lib/setup/stores";
   import WifiStep from "./wifi-step.svelte";
   import ProvisionStep from "./provision-step.svelte";
   import ConnectingStep from "./connecting-step.svelte";
