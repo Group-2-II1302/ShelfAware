@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setupState } from "../../lib/setup/stores";
   import ErrorBanner from "../../lib/components/ErrorBanner.svelte";
-  import { waitForNewShelf } from "../../lib/setup/waitForShelf"
+  import { waitForNewShelf } from "../../lib/setup/waitForNewShelf";
   import { onMount } from "svelte";
 
   let cancelled = false;
