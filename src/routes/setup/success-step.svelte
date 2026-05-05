@@ -1,6 +1,6 @@
 <script lang="ts">
-    export let onFinish: () => void;
-    
+    let { onFinish } = $props<{ onFinish: () => void }>();
+
     function finish() {
         onFinish();
     }
