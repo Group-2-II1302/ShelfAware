@@ -17,11 +17,11 @@
         </p>
 
         <button
-        on:click={() =>
+        onclick={() =>
             setupState.set({
             step: "waiting",
-            shelfId: null,
-            error: null
+            shelfId: undefined,
+            error: undefined
             })
         }
         >
