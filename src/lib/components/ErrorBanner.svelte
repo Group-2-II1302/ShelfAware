@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setupState } from "../setup/stores";
 
-  export let message: string = "";
+  const { message = "" } = $props<{ message?: string }>();
 </script>
 
 {#if message}
