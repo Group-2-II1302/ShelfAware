@@ -4,6 +4,9 @@
   import { invalidate } from '$app/navigation'
   import { onMount } from 'svelte'
 
+  import Navbar from '$lib/components/Navbar.svelte'
+  import Menu from '$lib/components/Menu.svelte'
+
   let { data, children } = $props()
   let { supabase, claims } = $derived(data)
 
@@ -21,4 +24,8 @@
   <link rel="icon" href={favicon} />
 </svelte:head>
 
+<Navbar />
+
 {@render children()}
+
+<Menu />
