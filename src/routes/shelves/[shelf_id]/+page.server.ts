@@ -3,12 +3,7 @@ import type { PageServerLoad } from './$types'
 
 export const load: PageServerLoad = async ({ locals, params }) => {
   const shelfId = params.shelf_id
-
-  const {
-    data: { user }
-  } = await locals.supabase.auth.getUser()
-
-  console.log('AUTH USER:', user?.id)
+  const { data: { user } } = await locals.supabase.auth.getUser()
 
   if (!user) {
     throw redirect(303, '/login')
