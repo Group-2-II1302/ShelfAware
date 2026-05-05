@@ -1,9 +1,15 @@
 import { writable } from "svelte/store";
 
-export const setupState = writable({
-  step: "wifi", // wifi | provision | connecting | success
-  deviceId: undefined as string | undefined,
+export type SetupStep = "idle" | "waiting" | "success" | "error";
+
+export type SetupState = {
+  step: SetupStep;
+  shelfId: string | null;
+  error: string | null;
+};
+
+export const setupState = writable<SetupState>({
+  step: "idle",
   shelfId: undefined as string | undefined,
   error: undefined as string | undefined,
-  loading: false
 });

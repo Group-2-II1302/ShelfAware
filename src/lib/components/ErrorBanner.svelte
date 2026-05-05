@@ -1,20 +1,17 @@
 <script lang="ts">
-  import type { SetupErrorAction } from "../setup/errorActions";
-  import { handleSetupError } from "../setup/errorHandler";
+  import { setupState } from "../setup/stores";
 
   export let message: string = "";
-  export let action: SetupErrorAction | null = null;
 </script>
 
 {#if message}
   <div class="error-banner">
     <p>{message}</p>
 
-    {#if action}
-      <button on:click={() => handleSetupError(action)}>
-        Try again
-      </button>
-    {/if}
+    <button on:click={() => setupState.update(s => ({...s, error: undefined}))}>
+        Dismiss
+    </button>
+
   </div>
 {/if}
 
