@@ -56,30 +56,31 @@ export const actions: Actions = {
         console.log("barcode:", barcode, `(Type: ${typeof barcode})`);
         console.log("postgresDate:", postgresDate, `(Type: ${typeof postgresDate})`);
 
-        // 5. Update targeted row with strict parameter types
-        const { data: updatedRows, error: updateError } = await supabase
+        // 5. Final write for this flow: insert full slot item with expiry in one go.
+        const { data: insertedRows, error: insertError } = await supabase
             .from("shelf_items")
-            .update({ 
+            .insert({
+                shelf_id,
+                scale_index,
+                barcode,
                 expiry_date: postgresDate,
                 updated_at: new Date().toISOString()
             })
-            .eq("shelf_id", shelf_id)         // Must match UUID string format
-            .eq("scale_index", scale_index)   // Must be a raw Number/Integer
-            .eq("barcode", barcode.toString()) // Must be a string representation of the barcode
-            .select();
+            .select("id");
 
-        if (updateError) {
-            console.error("Database Update Error:", updateError.message);
-            return fail(500, { error: `Database Save Failed: ${updateError.message}` });
+        if (insertError) {
+            console.error("Database Insert Error:", insertError.message);
+            return fail(500, { error: `Database Save Failed: ${insertError.message}` });
         }
 
-        console.log("Database response (updated rows):", updatedRows);
+        console.log("Database response (inserted rows):", insertedRows);
 
-        // 6. Explicit check: If zero rows matched, let's complain and return details
-        if (!updatedRows || updatedRows.length === 0) {
-            console.error("Update failed: matched 0 rows. This is usually due to a schema type mismatch or RLS policies.");
-            return fail(404, { 
-                error: `Could not find a matching row to update. Double check that scale_index is an integer in your database schema.` 
+        // 6. Explicit check: ensure insert returned at least one row
+        if (!insertedRows || insertedRows.length === 0) {
+            console.error("Insert returned no rows.", { shelf_id, scale_index, barcode });
+            return fail(404, {
+                error:
+                    "Could not insert shelf item. Please verify your RLS policy allows INSERT for this shelf membership."
             });
         }
 

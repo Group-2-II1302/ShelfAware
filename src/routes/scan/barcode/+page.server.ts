@@ -76,33 +76,8 @@ export const actions: Actions = {
             return fail(500, { error: `Catalog Save Failed: ${catError.message}` });
         }
 
-        // 4. STEP 2: Link product to the shelf slot
-        // Workaround for missing composite unique constraint: Clear existing item first, then insert.
-        const { error: deleteError } = await supabase
-            .from("shelf_items")
-            .delete()
-            .eq("shelf_id", shelf_id)
-            .eq("scale_index", scale_index);
-
-        if (deleteError) {
-            console.error("Failed to clear existing slot:", deleteError.message);
-            return fail(500, { error: "Database failed to clear the current shelf slot." });
-        }
-
-        const { error: insertError } = await supabase
-            .from("shelf_items")
-            .insert({
-                shelf_id,
-                scale_index,
-                barcode,
-            });
-
-        if (insertError) {
-            console.error("Database rejected shelf_items assignment:", insertError.message);
-            return fail(500, { error: "Database failed to link product to slot." });
-        }
-
-        // 5. THE REDIRECT PLAY: Smoothly transition to the OCR scanner with full context parameters!
+        // 4. Do not write shelf_items yet.
+        // The OCR step will do one final insert with both barcode and expiry date.
         throw redirect(
             303, 
             `/scan/ocr?shelf_id=${encodeURIComponent(shelf_id)}&slot=${encodeURIComponent(scale_index)}&barcode=${encodeURIComponent(barcode)}`
