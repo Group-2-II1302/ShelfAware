@@ -7,31 +7,30 @@
   let cancelled = false;
 
   async function startWaiting() {
-    setupState.update(s => ({
-        ...s,
-        loading: true,
+    setupState.set({
+        step: "waiting",
+        shelfId: undefined,
         error: undefined
-    }));
+    });
 
     try {
         const shelfId = await waitForNewShelf();
 
         if (cancelled) return;
 
-        setupState.update(s => ({
-            ...s,
-            shelfId,
+        setupState.set({
             step: "success",
-            loading: false
-        }));
+            shelfId,
+            error: undefined
+        });
     } catch (e) {
         if (cancelled) return;
 
-        setupState.update(s => ({
-            ...s,
-            loading: false,
+        setupState.set({
+            step: "error",
+            shelfId: undefined,
             error: "Device setup timed out. Please try again."
-        }));
+        });
     }
   }
 

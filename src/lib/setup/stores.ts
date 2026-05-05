@@ -4,8 +4,8 @@ export type SetupStep = "idle" | "waiting" | "success" | "error";
 
 export type SetupState = {
   step: SetupStep;
-  shelfId: string | null;
-  error: string | null;
+  shelfId: string | undefined;
+  error: string | undefined;
 };
 
 export const setupState = writable<SetupState>({

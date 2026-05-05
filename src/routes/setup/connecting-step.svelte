@@ -6,22 +6,33 @@
 
   let TIMEOUT = 60000;
 
+  type ShelfListResponse = {
+        shelves: { shelf_id: string }[];
+  };
+
   onMount(() => {
     let timeoutId: ReturnType<typeof setTimeout>;
 
     let stopped = false;
 
     async function run() {
-        try {
-            const { data: session } = await supabase.auth.getSession();
+        setupState.update(s => ({
+            ...s,
+            step: "waiting",
+            error: null
+        }));
 
-            const jwt = session.session?.access_token;
+        try {
+            const { data } = await supabase.auth.getSession();
+
+            const jwt = data.session?.access_token;
 
             if (!jwt) {
-                setupState.update(s => ({
-                    ...s,
+                setupState.set({
+                    step: "error",
+                    shelfId: undefined,
                     error: "Not authenticated"
-                }));
+                });
                 return;
             }
 
@@ -29,32 +40,42 @@
                 Authorization: `Bearer ${jwt}`
             };
         
-            const before = await fetch("/api/shelves", { headers }).then(r => r.json());
+            const beforeRes = await fetch("/api/shelves", { headers });
+
+            if (!beforeRes.ok) throw new Error("Failed initial fetch");
+
+            const before: ShelfListResponse = await beforeRes.json();
             const baseline = new Set(before.shelves.map((s: any) => s.shelf_id));
 
             timeoutId = setTimeout(() => {
-                setupState.update(s => ({
-                    ...s,
+                setupState.set({
+                    step: "error",
+                    shelfId: undefined,
                     error: "Device connection timed out"
-                }));
+                });
                 stopped = true;
             }, TIMEOUT);
 
             while (!stopped) {
-                const now = await fetch("/api/shelves", {headers }).then(r => r.json());
+                const res = await fetch("/api/shelves", {headers });
                 
+                if (!res.ok) throw new Error("Polling failed");
+
+                const now: ShelfListResponse = await res.json();
+
                 const fresh = now.shelves.find(
                     (s: any) => !baseline.has(s.shelf_id)
                 );
 
-                if (fresh) {
+                if (fresh && !stopped) {
                     clearTimeout(timeoutId);
 
-                    setupState.update(s => ({
-                        ...s,
+                    setupState.set({
+                        step: "success",
                         shelfId: fresh.shelf_id,
-                        step: "success"
-                    }));
+                        error: undefined
+                        
+                    });
 
                     return;
                 }
@@ -63,10 +84,13 @@
             }
 
         } catch (e) {
-            setupState.update(s => ({
-                ...s,
-                error: "Failed to check shelf status"
-            }));
+            if (!stopped) {    
+                setupState.set({
+                    step: "error",
+                    shelfId: undefined,
+                    error: "Failed to check shelf status"
+                });
+            }
         }
     }
 
