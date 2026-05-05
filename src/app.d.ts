@@ -10,8 +10,8 @@ type TypedSupabaseClient = ReturnType<typeof createServerClient<Database>>;
 declare global {
   namespace App {
     interface Locals {
-      supabase: SupabaseClient
-      user: User | null       // ← add this line
+      supabase: SupabaseClient;
+      user: User | null; // ← add this line
     }
   }
 }

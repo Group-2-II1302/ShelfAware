@@ -29,9 +29,11 @@ export const handle: Handle = async ({ event, resolve }) => {
       },
     },
   );
-  
-  const { data: { user } } = await event.locals.supabase.auth.getUser()
-  event.locals.user = user
+
+  const {
+    data: { user },
+  } = await event.locals.supabase.auth.getUser();
+  event.locals.user = user;
 
   return resolve(event, {
     filterSerializedResponseHeaders(name: string) {
