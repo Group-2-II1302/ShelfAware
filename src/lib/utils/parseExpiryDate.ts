@@ -18,12 +18,22 @@
 // ---------------------------------------------------------------------------
 
 const MONTH_ABBR: Record<string, number> = {
-  JAN: 1,  FEB: 2,  MAR: 3,  APR: 4,  MAY: 5,  JUN: 6,
-  JUL: 7,  AUG: 8,  SEP: 9,  OCT: 10, NOV: 11, DEC: 12,
+  JAN: 1,
+  FEB: 2,
+  MAR: 3,
+  APR: 4,
+  MAY: 5,
+  JUN: 6,
+  JUL: 7,
+  AUG: 8,
+  SEP: 9,
+  OCT: 10,
+  NOV: 11,
+  DEC: 12,
 };
 
 function pad2(n: number): string {
-  return String(n).padStart(2, '0');
+  return String(n).padStart(2, "0");
 }
 
 /**
@@ -71,8 +81,8 @@ export function parseExpiryDate(raw: string): string | null {
   // Normalise: uppercase, collapse non-alphanumeric runs to single space
   const s = raw
     .toUpperCase()
-    .replace(/[^0-9A-Z.\-/:]/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/[^0-9A-Z.\-/:]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
   // -------------------------------------------------------------------------
@@ -81,7 +91,9 @@ export function parseExpiryDate(raw: string): string | null {
   // -------------------------------------------------------------------------
   const sep4yr = s.match(/\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b/);
   if (sep4yr) {
-    const a = +sep4yr[1], b = +sep4yr[2], c = +sep4yr[3];
+    const a = +sep4yr[1],
+      b = +sep4yr[2],
+      c = +sep4yr[3];
     // Try DD-MM-YYYY
     if (isValidDate(a, b, c)) return fmt(a, b, c);
     // Try MM-DD-YYYY (US style) only if day > 12
@@ -108,7 +120,8 @@ export function parseExpiryDate(raw: string): string | null {
   // MM/YYYY or YYYY/MM
   const monthYear = s.match(/\b(\d{2})[.\-/](\d{4})\b/);
   if (monthYear) {
-    const a = +monthYear[1], b = +monthYear[2];
+    const a = +monthYear[1],
+      b = +monthYear[2];
     if (a >= 1 && a <= 12 && b >= 2000 && b <= 2099) return fmt(1, a, b);
     if (b >= 1 && b <= 12 && a >= 2000 && a <= 2099) return fmt(1, b, a);
   }
@@ -120,7 +133,9 @@ export function parseExpiryDate(raw: string): string | null {
   // -------------------------------------------------------------------------
   const spaceSep = s.match(/\b(\d{1,2})\s+(\d{1,2})\s+(\d{2,4})\b/);
   if (spaceSep) {
-    const a = +spaceSep[1], b = +spaceSep[2], cRaw = +spaceSep[3];
+    const a = +spaceSep[1],
+      b = +spaceSep[2],
+      cRaw = +spaceSep[3];
     const year = cRaw < 100 ? expandYear(cRaw) : cRaw;
     // Try DD MM YY (most common on European food packaging)
     if (isValidDate(a, b, year)) return fmt(a, b, year);
@@ -167,9 +182,13 @@ export function parseExpiryDate(raw: string): string | null {
   for (const run of runs) {
     // 8 digits: try DDMMYYYY then YYYYMMDD
     if (run.length === 8) {
-      const dd   = +run.slice(0, 2), mm   = +run.slice(2, 4), yyyy = +run.slice(4, 8);
-      const yyyy2 = +run.slice(0, 4), mm2  = +run.slice(4, 6), dd2  = +run.slice(6, 8);
-      if (isValidDate(dd, mm, yyyy))   return fmt(dd,  mm,  yyyy);
+      const dd = +run.slice(0, 2),
+        mm = +run.slice(2, 4),
+        yyyy = +run.slice(4, 8);
+      const yyyy2 = +run.slice(0, 4),
+        mm2 = +run.slice(4, 6),
+        dd2 = +run.slice(6, 8);
+      if (isValidDate(dd, mm, yyyy)) return fmt(dd, mm, yyyy);
       if (isValidDate(dd2, mm2, yyyy2)) return fmt(dd2, mm2, yyyy2);
     }
 
@@ -178,8 +197,12 @@ export function parseExpiryDate(raw: string): string | null {
     // e.g. "060227": YYMMDD → 2006-02-27 (past, implausible for expiry)
     //                DDMMYY → 2027-02-06 (future, plausible) ← preferred
     if (run.length === 6) {
-      const yy1 = +run.slice(0, 2), mm1 = +run.slice(2, 4), dd1 = +run.slice(4, 6);
-      const dd2 = +run.slice(0, 2), mm2 = +run.slice(2, 4), yy2 = +run.slice(4, 6);
+      const yy1 = +run.slice(0, 2),
+        mm1 = +run.slice(2, 4),
+        dd1 = +run.slice(4, 6);
+      const dd2 = +run.slice(0, 2),
+        mm2 = +run.slice(2, 4),
+        yy2 = +run.slice(4, 6);
 
       const yearYYMMDD = expandYear(yy1);
       const yearDDMMYY = expandYear(yy2);
@@ -192,7 +215,8 @@ export function parseExpiryDate(raw: string): string | null {
         // year (within the window a food product is likely to be labelled).
         const plausibleYYMMDD = yearYYMMDD >= 2020 && yearYYMMDD <= 2040;
         const plausibleDDMMYY = yearDDMMYY >= 2020 && yearDDMMYY <= 2040;
-        if (!plausibleYYMMDD && plausibleDDMMYY) return fmt(dd2, mm2, yearDDMMYY);
+        if (!plausibleYYMMDD && plausibleDDMMYY)
+          return fmt(dd2, mm2, yearDDMMYY);
         // Both plausible (or neither): fall back to ISO YYMMDD
         return fmt(dd1, mm1, yearYYMMDD);
       }
@@ -202,9 +226,11 @@ export function parseExpiryDate(raw: string): string | null {
 
     // 4 digits: MMYY (month-year on packaging, e.g. "0526" → May 2026)
     if (run.length === 4) {
-      const mm = +run.slice(0, 2), yy = +run.slice(2, 4);
+      const mm = +run.slice(0, 2),
+        yy = +run.slice(2, 4);
       const year = expandYear(yy);
-      if (mm >= 1 && mm <= 12 && year >= 2020 && year <= 2040) return fmt(1, mm, year);
+      if (mm >= 1 && mm <= 12 && year >= 2020 && year <= 2040)
+        return fmt(1, mm, year);
     }
   }
 

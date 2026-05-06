@@ -14,12 +14,14 @@
 // ---------------------------------------------------------------------------
 
 function b64url(input: string): string {
-  return btoa(input).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return btoa(input).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function b64urlFromBytes(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
 }
 
 /**
@@ -28,10 +30,10 @@ function b64urlFromBytes(bytes: Uint8Array): string {
  */
 function parsePem(raw: string): Uint8Array {
   const pem = raw
-    .replace(/\\n/g, '\n')           // literal \n from .env
-    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
-    .replace(/-----END PRIVATE KEY-----/g, '')
-    .replace(/\s+/g, '');            // strip all whitespace / newlines
+    .replace(/\\n/g, "\n") // literal \n from .env
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, ""); // strip all whitespace / newlines
 
   return Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
 }
@@ -40,31 +42,36 @@ function parsePem(raw: string): Uint8Array {
  * Build and sign a Google-compatible JWT using RS256.
  * Returns the signed JWT string ready for token exchange.
  */
-async function buildJwt(serviceAccountEmail: string, privateKeyPem: string): Promise<string> {
+async function buildJwt(
+  serviceAccountEmail: string,
+  privateKeyPem: string,
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
-  const header  = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = b64url(JSON.stringify({
-    iss:   serviceAccountEmail,
-    scope: 'https://www.googleapis.com/auth/cloud-vision',
-    aud:   'https://oauth2.googleapis.com/token',
-    iat:   now,
-    exp:   now + 3600,
-  }));
+  const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = b64url(
+    JSON.stringify({
+      iss: serviceAccountEmail,
+      scope: "https://www.googleapis.com/auth/cloud-vision",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    }),
+  );
 
   const toSign = `${header}.${payload}`;
 
-  const keyData   = parsePem(privateKeyPem);
+  const keyData = parsePem(privateKeyPem);
   const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
+    "pkcs8",
     keyData,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
-    ['sign'],
+    ["sign"],
   );
 
   const sigBytes = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
+    "RSASSA-PKCS1-v1_5",
     cryptoKey,
     new TextEncoder().encode(toSign),
   );
@@ -82,13 +89,16 @@ async function buildJwt(serviceAccountEmail: string, privateKeyPem: string): Pro
  * would cache this, but for a mobile scan app the volume is low enough that
  * one token per scan is fine.
  */
-async function getAccessToken(serviceAccountEmail: string, privateKeyPem: string): Promise<string> {
+async function getAccessToken(
+  serviceAccountEmail: string,
+  privateKeyPem: string,
+): Promise<string> {
   const jwt = await buildJwt(serviceAccountEmail, privateKeyPem);
 
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body:    `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
   });
 
   if (!res.ok) {
@@ -96,7 +106,7 @@ async function getAccessToken(serviceAccountEmail: string, privateKeyPem: string
     throw new Error(`Google token exchange failed: ${err}`);
   }
 
-  const data = await res.json() as { access_token: string };
+  const data = (await res.json()) as { access_token: string };
   return data.access_token;
 }
 
@@ -110,23 +120,25 @@ async function getAccessToken(serviceAccountEmail: string, privateKeyPem: string
  * if nothing was found.
  */
 export async function detectText(
-  base64Image:        string,
+  base64Image: string,
   serviceAccountEmail: string,
-  privateKeyPem:      string,
+  privateKeyPem: string,
 ): Promise<string> {
   const token = await getAccessToken(serviceAccountEmail, privateKeyPem);
 
-  const res = await fetch('https://vision.googleapis.com/v1/images:annotate', {
-    method:  'POST',
+  const res = await fetch("https://vision.googleapis.com/v1/images:annotate", {
+    method: "POST",
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type':  'application/json',
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      requests: [{
-        image:    { content: base64Image },
-        features: [{ type: 'TEXT_DETECTION', maxResults: 5 }],
-      }],
+      requests: [
+        {
+          image: { content: base64Image },
+          features: [{ type: "TEXT_DETECTION", maxResults: 5 }],
+        },
+      ],
     }),
   });
 
@@ -135,10 +147,10 @@ export async function detectText(
     throw new Error(`Google Vision API error: ${err}`);
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     responses: Array<{
       fullTextAnnotation?: { text: string };
-      textAnnotations?:    Array<{ description: string }>;
+      textAnnotations?: Array<{ description: string }>;
     }>;
   };
 
@@ -147,6 +159,6 @@ export async function detectText(
   return (
     data.responses?.[0]?.fullTextAnnotation?.text ??
     data.responses?.[0]?.textAnnotations?.[0]?.description ??
-    ''
+    ""
   );
 }
