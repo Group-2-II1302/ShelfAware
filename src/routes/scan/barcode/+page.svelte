@@ -12,6 +12,13 @@
   const slot        = $derived($page.url.searchParams.get('slot')     ?? '')
   // scale_index is slot parsed as integer — validated server-side as well
   const scale_index = $derived(parseInt(slot, 10))
+  /**
+   * Truthy when the user entered the flow by tapping a filled slot to
+   * replace its product. Forwarded to the OCR step via a hidden form
+   * field so the server can swap the existing shelf_items row instead
+   * of inserting a new one. Treated as a boolean — value '1' or '0'.
+   */
+  const replaceMode = $derived($page.url.searchParams.get('replace') === '1')
 
   // Guard: if either param is missing or slot is not a valid integer, surface
   // the error immediately rather than letting the user scan and then fail.
@@ -84,12 +91,29 @@
     }
   }
 
-  let foundProduct = $state<ProductCatalogEntry | null>(null)
-  let isFetching   = $state(false)
-  let isSaving     = $state(false)
-  let fetchError   = $state<string | null>(null)
-  let saveError    = $state<string | null>(null)
-  let formElement  = $state<HTMLFormElement | null>(null)
+  let foundProduct     = $state<ProductCatalogEntry | null>(null)
+  let confirmedProduct = $state(false)
+  let isFetching       = $state(false)
+  let isSaving         = $state(false)
+  let fetchError       = $state<string | null>(null)
+  let saveError        = $state<string | null>(null)
+  let formElement      = $state<HTMLFormElement | null>(null)
+
+  /**
+   * State for the "couldn't find this barcode" prompt step. We show it
+   * after a scan returns no OpenFoodFacts hit (or the network failed)
+   * and let the user decide whether to enter the data manually or
+   * re-scan. Holds the scanned barcode string while we wait for input;
+   * null when no prompt is active.
+   */
+  let unknownProductBarcode = $state<string | null>(null)
+  let lookupNetworkError    = $state(false)
+  /**
+   * When the user opts into manual entry from the "not found" prompt,
+   * we stash the scanned barcode here so BarcodeScanner can pre-fill it.
+   * Empty string means no pre-fill (default fresh state).
+   */
+  let manualEntryBarcode    = $state('')
 
   // ── Auto-submit ──────────────────────────────────────────────────────────────
   // Only trigger when foundProduct is set AND has a non-empty product_name.
@@ -97,6 +121,7 @@
   // since the manual form calls onManualSave only on explicit submit.
   $effect(() => {
     if (
+      confirmedProduct &&
       foundProduct?.product_name &&
       foundProduct?.barcode &&
       !isFetching &&
@@ -114,12 +139,10 @@
     saveError   = null
 
     try {
-      const res = await fetch(
-        `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
-      )
+      const res = await fetch(`/api/product/${encodeURIComponent(barcode)}`)
 
       if (!res.ok) {
-        throw new Error(`OpenFoodFacts returned ${res.status}`)
+        throw new Error(`Product lookup returned ${res.status}`)
       }
 
       const data = await res.json()
@@ -135,33 +158,18 @@
           nutrition_facts: extractNutritionFacts(p),
         }
       } else {
-        // Product not in OpenFoodFacts — pre-fill the barcode and let user
-        // complete the rest via manual entry in BarcodeScanner
-        fetchError = 'Product not found in catalog. Please enter details manually.'
-        foundProduct = {
-          barcode,
-          product_name:    '',
-          brand:           '',
-          image_url:       '',
-          full_weight_g:   0,
-          nutrition_facts: null,
-        }
-        // Do NOT set full foundProduct here — product_name is empty so the
-        // $effect guard above will NOT auto-submit. The user must fill in
-        // the manual form and submit it explicitly.
+        /*
+          Product not in OpenFoodFacts. Surface a dedicated "not found"
+          step so the user can decide between manual entry and re-scan;
+          we no longer auto-drop them into the manual form.
+        */
+        unknownProductBarcode = barcode
+        lookupNetworkError    = false
       }
     } catch (err) {
       console.error('OpenFoodFacts fetch error:', err)
-      fetchError = 'Could not reach product catalog. Please enter details manually.'
-      // Same pattern — empty product_name prevents auto-submit
-      foundProduct = {
-        barcode,
-        product_name:    '',
-        brand:           '',
-        image_url:       '',
-        full_weight_g:   0,
-        nutrition_facts: null,
-      }
+      unknownProductBarcode = barcode
+      lookupNetworkError    = true
     } finally {
       isFetching = false
     }
@@ -180,7 +188,38 @@
       full_weight_g:   manualData.full_weight_g   ?? 0,
       nutrition_facts: manualData.nutrition_facts ?? null,
     }
-    // product_name is now set — $effect will fire and submit the form
+    // Manual entry is its own confirmation — submitting the form means
+    // the user has already vetted the data — so skip the confirm step.
+    confirmedProduct = true
+  }
+
+  // ── Confirmation handlers ────────────────────────────────────────────────────
+  const confirmProduct = () => {
+    confirmedProduct = true
+  }
+
+  const rescanProduct = () => {
+    foundProduct          = null
+    confirmedProduct      = false
+    fetchError            = null
+    saveError             = null
+    unknownProductBarcode = null
+    lookupNetworkError    = false
+    manualEntryBarcode    = ''
+  }
+
+  // ── "Product not found" prompt handlers ─────────────────────────────────────
+  /**
+   * User chose to enter the product details manually after the lookup
+   * failed. Stash the scanned barcode so BarcodeScanner can pre-fill it,
+   * then dismiss the prompt.
+   */
+  const startManualEntry = () => {
+    if (unknownProductBarcode) {
+      manualEntryBarcode = unknownProductBarcode
+    }
+    unknownProductBarcode = null
+    lookupNetworkError    = false
   }
 </script>
 
@@ -198,12 +237,59 @@
       </p>
     </div>
 
-  {:else if !foundProduct?.product_name && !isFetching}
+  {:else if unknownProductBarcode && !isFetching}
+    <!-- Lookup step result: scan succeeded but the barcode wasn't in
+         OpenFoodFacts (or the network failed). Let the user choose how
+         to proceed instead of dumping them into the manual form. -->
     <div class="page-header">
-      <h1>Register Product</h1>
+      <h1>Product Not Found</h1>
       <p class="slot-label">
         Shelf <strong>{shelf_id}</strong> / Slot <strong>{slot}</strong>
       </p>
+    </div>
+
+    <div class="confirm-card">
+      <div class="confirm-card__body">
+        <p class="confirm-card__product">
+          {lookupNetworkError ? "Couldn't reach product catalog" : "We couldn't find this barcode"}
+        </p>
+        <p class="confirm-card__brand">
+          {#if lookupNetworkError}
+            Check your connection and try again, or enter the product details by hand.
+          {:else}
+            The barcode scanned successfully but isn't in OpenFoodFacts.
+            You can add it manually now or try scanning again.
+          {/if}
+        </p>
+        <dl class="confirm-card__meta">
+          <div class="confirm-card__meta-row">
+            <dt>Barcode</dt>
+            <dd>{unknownProductBarcode}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="confirm-card__actions">
+        <button type="button" class="btn-secondary" onclick={rescanProduct}>
+          Re-scan
+        </button>
+        <button type="button" class="btn-primary" onclick={startManualEntry}>
+          Enter manually
+        </button>
+      </div>
+    </div>
+
+  {:else if !foundProduct?.product_name && !isFetching}
+    <div class="page-header">
+      <h1>{replaceMode ? 'Replace Product' : 'Register Product'}</h1>
+      <p class="slot-label">
+        Shelf <strong>{shelf_id}</strong> / Slot <strong>{slot}</strong>
+      </p>
+      {#if replaceMode}
+        <p class="replace-hint">
+          Scanning will replace whatever is currently in this slot.
+        </p>
+      {/if}
     </div>
 
     {#if fetchError}
@@ -213,7 +299,59 @@
     <BarcodeScanner
       onscan={handleScan}
       onManualSave={handleManualSave}
+      initialMode={manualEntryBarcode ? 'manual' : 'scan'}
+      prefilledBarcode={manualEntryBarcode}
     />
+
+  {:else if foundProduct?.product_name && !confirmedProduct && !isSaving && !saveError}
+    <!-- Confirmation step: show what we found from OpenFoodFacts and let
+         the user confirm or rescan before we commit anything. -->
+    <div class="page-header">
+      <h1>{replaceMode ? 'Confirm Replacement' : 'Confirm Product'}</h1>
+      <p class="slot-label">
+        Shelf <strong>{shelf_id}</strong> / Slot <strong>{slot}</strong>
+      </p>
+    </div>
+
+    <div class="confirm-card">
+      {#if foundProduct.image_url}
+        <img
+          class="confirm-card__image"
+          src={foundProduct.image_url}
+          alt={foundProduct.product_name}
+        />
+      {/if}
+
+      <div class="confirm-card__body">
+        <p class="confirm-card__product">{foundProduct.product_name}</p>
+        {#if foundProduct.brand}
+          <p class="confirm-card__brand">{foundProduct.brand}</p>
+        {/if}
+        <dl class="confirm-card__meta">
+          <div class="confirm-card__meta-row">
+            <dt>Barcode</dt>
+            <dd>{foundProduct.barcode}</dd>
+          </div>
+          <div class="confirm-card__meta-row">
+            <dt>Full weight</dt>
+            <dd>
+              {foundProduct.full_weight_g > 0
+                ? `${foundProduct.full_weight_g} g`
+                : 'Unknown — slot will be uncalibrated'}
+            </dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="confirm-card__actions">
+        <button type="button" class="btn-secondary" onclick={rescanProduct}>
+          Re-scan
+        </button>
+        <button type="button" class="btn-primary" onclick={confirmProduct}>
+          Looks good — Continue
+        </button>
+      </div>
+    </div>
 
   {:else}
     <div class="status-card">
@@ -226,7 +364,7 @@
         <p class="error-body">{saveError}</p>
         <button
           class="btn-retry"
-          onclick={() => { foundProduct = null; saveError = null; fetchError = null }}
+          onclick={rescanProduct}
         >
           Try again
         </button>
@@ -254,10 +392,12 @@
           saveError = (result.data as any)?.error ?? 'An unexpected error occurred.'
           // Reset foundProduct so the scanner reappears and the user can retry
           foundProduct = null
+          confirmedProduct = false
         } else if (result.type === 'error') {
           isSaving = false
           saveError = result.error?.message ?? 'An unexpected database/server error occurred.'
           foundProduct = null
+          confirmedProduct = false
         } else {
           // General fallback state update
           await update()
@@ -268,6 +408,7 @@
   >
     <input type="hidden" name="shelf_id"     value={shelf_id} />
     <input type="hidden" name="scale_index"  value={scale_index} />
+    <input type="hidden" name="replace"      value={replaceMode ? '1' : '0'} />
 
     <input type="hidden" name="barcode"         value={foundProduct?.barcode         ?? ''} />
     <input type="hidden" name="product_name"    value={foundProduct?.product_name    ?? ''} />
@@ -303,6 +444,15 @@
     margin: 0;
     font-size: 0.85rem;
     color: #71717a;
+  }
+
+  .replace-hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    color: #b45309;
+    background: #fef3c7;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
   }
 
   /* ── Status card ─────────────────────────────────────────────────────────── */
@@ -362,6 +512,95 @@
     border-radius: 8px;
     font-weight: 600;
     cursor: pointer;
+  }
+
+  /* ── Confirmation card ───────────────────────────────────────────────────── */
+  .confirm-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .confirm-card__image {
+    width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #f4f4f5;
+  }
+
+  .confirm-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .confirm-card__product {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .confirm-card__brand {
+    margin: 0;
+    font-size: 0.9rem;
+    opacity: 0.75;
+  }
+
+  .confirm-card__meta {
+    margin: 0.5rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+  }
+
+  .confirm-card__meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .confirm-card__meta-row dt {
+    opacity: 0.7;
+  }
+
+  .confirm-card__meta-row dd {
+    margin: 0;
+    text-align: right;
+  }
+
+  .confirm-card__actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .confirm-card__actions .btn-primary,
+  .confirm-card__actions .btn-secondary {
+    flex: 1;
+    padding: 0.65rem 0.75rem;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .confirm-card__actions .btn-primary {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border: 1px solid var(--accent);
+  }
+
+  .confirm-card__actions .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
   }
 
   .btn-retry:hover {

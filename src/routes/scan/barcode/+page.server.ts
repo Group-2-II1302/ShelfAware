@@ -45,6 +45,13 @@ export const actions: Actions = {
     const nutrition_facts_raw = formData.get("nutrition_facts")?.toString();
     const shelf_id = formData.get("shelf_id")?.toString().trim();
     const scale_index_raw = formData.get("scale_index")?.toString();
+    /*
+      '1' when the user entered the flow by tapping a filled slot. We
+      forward this to the OCR step via the redirect URL so the final
+      shelf_items write swaps the existing row instead of inserting a
+      duplicate. Anything other than '1' is treated as a normal new add.
+    */
+    const replace = formData.get("replace")?.toString() === "1" ? "1" : "0";
 
     /*
       nutrition_facts is sent as a JSON string when found via OpenFoodFacts
@@ -120,7 +127,7 @@ export const actions: Actions = {
     // The OCR step will do one final insert with both barcode and expiry date.
     throw redirect(
       303,
-      `/scan/ocr?shelf_id=${encodeURIComponent(shelf_id)}&slot=${encodeURIComponent(scale_index)}&barcode=${encodeURIComponent(barcode)}`,
+      `/scan/ocr?shelf_id=${encodeURIComponent(shelf_id)}&slot=${encodeURIComponent(scale_index)}&barcode=${encodeURIComponent(barcode)}&replace=${replace}`,
     );
   },
 };

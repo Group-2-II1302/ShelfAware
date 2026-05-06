@@ -10,6 +10,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     shelf_id: url.searchParams.get("shelf_id"),
     slot: url.searchParams.get("slot"),
     barcode: url.searchParams.get("barcode"),
+    /*
+      '1' when this OCR step is part of a replace flow (user came in
+      from tapping a filled slot). The page forwards this through the
+      form so saveExpiry can swap the existing shelf_items row.
+    */
+    replace: url.searchParams.get("replace") === "1",
     isAuthenticated: !!session,
   };
 };
@@ -32,6 +38,7 @@ export const actions: Actions = {
     const barcode = formData.get("barcode")?.toString().trim();
     const shelf_id = formData.get("shelf_id")?.toString().trim();
     const scale_index_raw = formData.get("scale_index")?.toString().trim();
+    const replace = formData.get("replace")?.toString() === "1";
 
     // 2. Strict validation
     if (!expiry_date || !barcode || !shelf_id || !scale_index_raw) {
@@ -66,7 +73,66 @@ export const actions: Actions = {
       `(Type: ${typeof postgresDate})`,
     );
 
-    // 5. Final write for this flow: insert full slot item with expiry in one go.
+    /*
+      5. Final write for this flow.
+
+      Replace mode: the user tapped an already-filled slot to swap its
+      product. There's at most one row per (shelf_id, scale_index) by
+      domain rules (one physical scale per slot), so we delete any
+      existing row first and then insert the new one. We deliberately
+      don't use upsert here because we don't want to keep stale columns
+      (current_weight_g, expiry of the old product, etc.) — a
+      replacement is conceptually a brand-new item on the slot.
+
+      Add mode: straight insert as before. If RLS or a unique index
+      rejects an insert because something is already there, the user
+      should have been routed through replace mode instead.
+    */
+    if (replace) {
+      /*
+        Asking PostgREST to return the deleted rows (`.select()`) lets us
+        distinguish "nothing matched" from "delete succeeded". If RLS
+        silently filters us to zero rows the call still returns
+        error:null — without this we'd cheerfully insert a duplicate.
+      */
+      const { data: deletedRows, error: deleteError } = await supabase
+        .from("shelf_items")
+        .delete()
+        .eq("shelf_id", shelf_id)
+        .eq("scale_index", scale_index)
+        .select("id, barcode");
+
+      if (deleteError) {
+        console.error(
+          "Database Delete Error during replace:",
+          deleteError.message,
+        );
+        return fail(500, {
+          error: `Could not clear existing slot: ${deleteError.message}`,
+        });
+      }
+
+      console.log(
+        `Replace: deleted ${deletedRows?.length ?? 0} existing row(s) for shelf=${shelf_id} slot=${scale_index}`,
+        deletedRows,
+      );
+
+      if (!deletedRows || deletedRows.length === 0) {
+        /*
+          The user came in via the replace flow which only triggers from
+          tapping a filled slot, so there must have been a row visible
+          to them at page load. If we can't see it now, RLS is almost
+          certainly hiding it from this server-side delete (e.g. policy
+          requires shelf_members membership and we're using an anon
+          client, or the delete policy is missing entirely).
+        */
+        return fail(500, {
+          error:
+            "Could not delete existing slot item. Check RLS DELETE policy on shelf_items.",
+        });
+      }
+    }
+
     const { data: insertedRows, error: insertError } = await supabase
       .from("shelf_items")
       .insert({
