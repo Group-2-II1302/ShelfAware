@@ -1,10 +1,7 @@
 import type { RequestHandler } from "./$types";
 import { json, error } from "@sveltejs/kit";
 import { detectText } from "$lib/server/googleVision";
-import {
-  GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  GOOGLE_PRIVATE_KEY,
-} from "$env/static/private";
+import { env } from "$env/dynamic/private";
 
 /**
  * POST /scan/ocr/vision
@@ -26,15 +23,15 @@ export const POST: RequestHandler = async ({ request }) => {
     throw error(400, "Missing image field");
   }
 
-  if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
+  if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_PRIVATE_KEY) {
     throw error(500, "Google Vision credentials not configured");
   }
 
   try {
     const text = await detectText(
       image,
-      GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      GOOGLE_PRIVATE_KEY,
+      env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      env.GOOGLE_PRIVATE_KEY,
     );
     console.log("Vision returned:", JSON.stringify(text));
     return json({ text });

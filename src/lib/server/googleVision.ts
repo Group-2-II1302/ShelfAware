@@ -73,7 +73,7 @@ async function buildJwt(
   const sigBytes = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     cryptoKey,
-    new TextEncoder().encode(toSign),
+    new TextEncoder().encode(toSign) as unknown as ArrayBuffer,
   );
 
   return `${toSign}.${b64urlFromBytes(new Uint8Array(sigBytes))}`;
