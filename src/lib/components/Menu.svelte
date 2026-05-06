@@ -9,9 +9,9 @@
 
 <div id="menu">
   <ul>
-    <li><a href="/"><IconHome2Filled /></a></li>
-    <li><a href="/scan/barcode"><IconCameraFilled /></a></li>
-    <li><a href="/inbox"><IconBellFilled /></a></li>
-    <li><IconDots /></li>
+    <li><a href="/"><IconHome2Filled size={32} /></a></li>
+    <li><a href="/scan/barcode"><IconCameraFilled size={32} /></a></li>
+    <li><a href="/inbox"><IconBellFilled size={32} /></a></li>
+    <li><IconDots size={32} /></li>
   </ul>
 </div>
