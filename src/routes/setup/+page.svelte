@@ -48,11 +48,20 @@
 {#if $setupState.step === "idle"}
     <div>
         <h2>Set up your device</h2>
-        <p>
-        1. Connect to <b>ShelfAware_Setup</b> WiFi<br />
-        2. Open <b>http://192.168.4.1</b> in your browser<br />
-        3. Complete setup on the device page
-        </p>
+        <div>
+            <div>
+                1. Make sure you're connected to your device's WiFi hot spot
+            </div>
+            <div>
+                2. Open the <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">device page</a>
+            </div>
+            <div>
+                3. Fill in the relevant information
+            </div>
+            <div>
+                4. Click the button below once you have finished the steps above
+            </div>
+    </div>
 
         <button
         onclick={startSetup}>
@@ -60,9 +69,9 @@
         </button>
     </div>
 {:else if $setupState.step === "waiting"}
-  <ConnectingStep />
+    <ConnectingStep />
 {:else if $setupState.step === "success"}
-  <SuccessStep onFinish={handleFinish}/>
+    <SuccessStep onFinish={handleFinish}/>
 {:else if $setupState.step === "error"}
     {#if $setupState.error}
         <ErrorBanner message={$setupState.error} />

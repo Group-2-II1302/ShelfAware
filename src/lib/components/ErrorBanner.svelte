@@ -8,7 +8,10 @@
   <div class="error-banner">
     <p>{message}</p>
 
-    <button onclick={() => setupState.update(s => ({...s, error: undefined}))}>
+    <button onclick={() => setupState.set({
+        step: "idle", 
+        shelfId: undefined,
+        error: undefined})}>
         Dismiss
     </button>
 
