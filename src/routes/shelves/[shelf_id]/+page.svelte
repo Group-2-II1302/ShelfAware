@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { enhance } from '$app/forms'
   import type { PageData } from './$types'
   import { ZONES } from '$lib/shelf'
   import {
@@ -8,6 +9,18 @@
   } from '$lib/shelfState'
 
   let { data }: { data: PageData } = $props()
+
+  /**
+   * Tracks which slot (by scale_index) currently has an in-flight
+   * delete request. Used to disable both action buttons on that slot
+   * while the request is pending so the user can't double-submit or
+   * navigate away mid-delete. Null when no delete is running.
+   */
+  let deletingSlot = $state<number | null>(null)
+
+  function confirmDelete(productLabel: string) {
+    return confirm(`Remove "${productLabel}" from this slot?`)
+  }
 
   const dateFormatter = new Intl.DateTimeFormat('en-GB')
 
@@ -59,12 +72,25 @@
         {#each slotsForZone(zone.slotIndices) as slot (slot.scale_index)}
           <li class="slot">
             {#if slot.status === 'filled'}
-              <a
-                class="slot-card slot-card--filled"
-                href={`/scan/barcode?shelf_id=${encodeURIComponent(data.shelf.id)}&slot=${slot.scale_index}&replace=1`}
-                aria-label={`Replace product in slot ${slot.scale_index}`}
-              >
+              <article class="slot-card slot-card--filled">
                 <p class="slot-index">Slot {slot.scale_index}</p>
+                <div class="slot-image">
+                  {#if slot.item.image_url}
+                    <img
+                      src={slot.item.image_url}
+                      alt=""
+                      loading="lazy"
+                      referrerpolicy="no-referrer"
+                    />
+                  {:else}
+                    <div class="slot-image__placeholder" aria-hidden="true">
+                      {(slot.item.product_name ?? slot.item.barcode)
+                        .trim()
+                        .charAt(0)
+                        .toUpperCase() || '?'}
+                    </div>
+                  {/if}
+                </div>
                 <h3 class="slot-product">
                   {slot.item.product_name ?? slot.item.barcode}
                 </h3>
@@ -82,8 +108,69 @@
                 <p class="slot-expiry">
                   expires: {formatExpiryDate(slot.item.expiry_date)}
                 </p>
-                <p class="slot-action slot-action--replace">Tap to replace</p>
-              </a>
+
+                <div class="slot-actions">
+                  <a
+                    class="slot-btn slot-btn--replace"
+                    href={`/scan/barcode?shelf_id=${encodeURIComponent(data.shelf.id)}&slot=${slot.scale_index}&replace=1`}
+                    aria-disabled={deletingSlot === slot.scale_index ? 'true' : undefined}
+                    tabindex={deletingSlot === slot.scale_index ? -1 : undefined}
+                    aria-label={`Replace product in slot ${slot.scale_index}`}
+                  >
+                    Replace
+                  </a>
+                  <form
+                    method="POST"
+                    action="?/deleteItem"
+                    use:enhance={({ cancel }) => {
+                      const label = slot.status === 'filled'
+                        ? (slot.item.product_name ?? slot.item.barcode)
+                        : ''
+                      if (!confirmDelete(label)) {
+                        cancel()
+                        return
+                      }
+                      deletingSlot = slot.scale_index
+                      return async ({ update }) => {
+                        await update()
+                        deletingSlot = null
+                      }
+                    }}
+                  >
+                    <input type="hidden" name="scale_index" value={slot.scale_index} />
+                    <button
+                      type="submit"
+                      class="slot-icon-btn slot-icon-btn--delete"
+                      disabled={deletingSlot === slot.scale_index}
+                      aria-label={`Delete product from slot ${slot.scale_index}`}
+                      title="Delete"
+                    >
+                      {#if deletingSlot === slot.scale_index}
+                        <span class="slot-icon-btn__spinner" aria-hidden="true"></span>
+                      {:else}
+                        <!-- Trash can: 24x24, single-color, follows currentColor -->
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="18"
+                          height="18"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 6h18" />
+                          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                        </svg>
+                      {/if}
+                    </button>
+                  </form>
+                </div>
+              </article>
             {:else}
               <a
                 class="slot-card slot-card--empty"
@@ -176,32 +263,143 @@
     border-color: var(--accent);
   }
 
-  .slot-card--filled {
-    transition:
-      transform 0.12s ease,
-      border-color 0.15s ease;
-    border-color: transparent;
-  }
-
-  .slot-card--filled:hover,
-  .slot-card--filled:focus-visible {
-    border-color: var(--accent);
-    transform: translateY(-1px);
-  }
-
-  .slot-action--replace {
+  .slot-actions {
     margin-top: auto;
-    padding-top: 0.5rem;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    padding-top: 0.75rem;
+    display: flex;
+    align-items: stretch;
+    gap: 0.5rem;
+    /* Allow children to shrink below their intrinsic content width
+       (otherwise long labels make the row overflow the card). */
+    min-width: 0;
+  }
+
+  .slot-actions form {
+    margin: 0;
+    display: flex;
+    flex: 0 0 auto;
+  }
+
+  .slot-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    /* Match the icon button's height and center text on both axes so
+       the two action buttons sit on the same baseline visually. */
+    height: 2.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid transparent;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    line-height: 1;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .slot-btn--replace {
+    background: var(--accent, #4f46e5);
+    color: white;
+  }
+
+  .slot-btn--replace:hover,
+  .slot-btn--replace:focus-visible {
+    filter: brightness(1.1);
+  }
+
+  .slot-btn--replace[aria-disabled='true'] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .slot-icon-btn {
+    flex: 0 0 auto;
+    width: 2.25rem;
+    height: 2.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 0.5rem;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .slot-icon-btn--delete {
+    color: #b91c1c;
+    border-color: #fca5a5;
+  }
+
+  .slot-icon-btn--delete:hover:not(:disabled),
+  .slot-icon-btn--delete:focus-visible:not(:disabled) {
+    background: #fee2e2;
+    border-color: #ef4444;
+  }
+
+  .slot-icon-btn:disabled {
     opacity: 0.6;
+    cursor: progress;
+  }
+
+  .slot-icon-btn__spinner {
+    width: 0.9rem;
+    height: 0.9rem;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: slot-spin 0.7s linear infinite;
+  }
+
+  @keyframes slot-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .slot-index {
     margin: 0 0 0.25rem;
     font-size: 0.75rem;
     opacity: 0.6;
+  }
+
+  .slot-image {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    margin: 0.25rem 0 0.5rem;
+    border-radius: 0.6rem;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.04);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .slot-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* Most OFF product photos are shot on white — a white background
+       blends them into surrounding chrome on light themes. The neutral
+       wash above gives them a subtle frame that works in both themes. */
+    background: white;
+  }
+
+  .slot-image__placeholder {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: var(--text);
+    opacity: 0.5;
   }
 
   .slot-product {
