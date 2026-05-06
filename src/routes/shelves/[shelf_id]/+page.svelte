@@ -7,6 +7,7 @@
     BUCKET_LABEL,
     NOT_CALIBRATED_LABEL,
   } from '$lib/shelfState'
+  import ProductDetailsModal from '$lib/components/ProductDetailsModal.svelte'
 
   let { data }: { data: PageData } = $props()
 
@@ -17,6 +18,23 @@
    * navigate away mid-delete. Null when no delete is running.
    */
   let deletingSlot = $state<number | null>(null)
+
+  /**
+   * The currently-open product details modal item, or null when no
+   * modal is open. We pass the entire filled-slot item shape down so
+   * the modal stays self-contained and doesn't have to look anything
+   * up itself.
+   */
+  type FilledItem = Extract<PageData['slots'][number], { status: 'filled' }>['item']
+  let activeItem = $state<FilledItem | null>(null)
+
+  function openDetails(item: FilledItem) {
+    activeItem = item
+  }
+
+  function closeDetails() {
+    activeItem = null
+  }
 
   function confirmDelete(productLabel: string) {
     return confirm(`Remove "${productLabel}" from this slot?`)
@@ -73,41 +91,56 @@
           <li class="slot">
             {#if slot.status === 'filled'}
               <article class="slot-card slot-card--filled">
-                <p class="slot-index">Slot {slot.scale_index}</p>
-                <div class="slot-image">
-                  {#if slot.item.image_url}
-                    <img
-                      src={slot.item.image_url}
-                      alt=""
-                      loading="lazy"
-                      referrerpolicy="no-referrer"
-                    />
-                  {:else}
-                    <div class="slot-image__placeholder" aria-hidden="true">
-                      {(slot.item.product_name ?? slot.item.barcode)
-                        .trim()
-                        .charAt(0)
-                        .toUpperCase() || '?'}
-                    </div>
-                  {/if}
-                </div>
-                <h3 class="slot-product">
-                  {slot.item.product_name ?? slot.item.barcode}
-                </h3>
-                <p class="slot-state slot-state--{stateModifier(slot.item.state)}">
-                  <span class="slot-state__dot" aria-hidden="true"></span>
-                  <span class="slot-state__label">
-                    {stateLabel(slot.item.state)}
-                  </span>
-                  {#if formatWeight(slot.item.current_weight_g)}
-                    <span class="slot-weight">
-                      · {formatWeight(slot.item.current_weight_g)}
+                <!--
+                  The card body itself is a button — tapping anywhere
+                  on the image / name / status opens the details modal.
+                  We deliberately keep the Replace + Delete actions as
+                  siblings rather than nesting them inside this button,
+                  since nested interactive elements aren't valid HTML
+                  and break keyboard / assistive-tech behaviour.
+                -->
+                <button
+                  type="button"
+                  class="slot-card__body"
+                  onclick={() => openDetails(slot.item)}
+                  aria-label={`View details for ${slot.item.product_name ?? slot.item.barcode}`}
+                >
+                  <p class="slot-index">Slot {slot.scale_index}</p>
+                  <div class="slot-image">
+                    {#if slot.item.image_url}
+                      <img
+                        src={slot.item.image_url}
+                        alt=""
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                      />
+                    {:else}
+                      <div class="slot-image__placeholder" aria-hidden="true">
+                        {(slot.item.product_name ?? slot.item.barcode)
+                          .trim()
+                          .charAt(0)
+                          .toUpperCase() || '?'}
+                      </div>
+                    {/if}
+                  </div>
+                  <h3 class="slot-product">
+                    {slot.item.product_name ?? slot.item.barcode}
+                  </h3>
+                  <p class="slot-state slot-state--{stateModifier(slot.item.state)}">
+                    <span class="slot-state__dot" aria-hidden="true"></span>
+                    <span class="slot-state__label">
+                      {stateLabel(slot.item.state)}
                     </span>
-                  {/if}
-                </p>
-                <p class="slot-expiry">
-                  expires: {formatExpiryDate(slot.item.expiry_date)}
-                </p>
+                    {#if formatWeight(slot.item.current_weight_g)}
+                      <span class="slot-weight">
+                        · {formatWeight(slot.item.current_weight_g)}
+                      </span>
+                    {/if}
+                  </p>
+                  <p class="slot-expiry">
+                    expires: {formatExpiryDate(slot.item.expiry_date)}
+                  </p>
+                </button>
 
                 <div class="slot-actions">
                   <a
@@ -187,6 +220,8 @@
   {/each}
 </main>
 
+<ProductDetailsModal item={activeItem} onclose={closeDetails} />
+
 <style>
   .shelf-page {
     width: 100%;
@@ -261,6 +296,39 @@
   .slot-card--empty:hover {
     background: var(--surface);
     border-color: var(--accent);
+  }
+
+  /*
+    The card body is a real <button> wrapping the image / name / state
+    so the entire upper region is one tap target for the details
+    modal. We strip the user-agent button chrome and let it inherit
+    the article's background, then mark up its hover/focus state with
+    a subtle ring so users know it's interactive.
+  */
+  .slot-card__body {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    border-radius: 0.6rem;
+  }
+
+  .slot-card__body:focus-visible {
+    outline: 2px solid var(--accent, #4f46e5);
+    outline-offset: 2px;
+  }
+
+  .slot-card__body:hover .slot-image,
+  .slot-card__body:focus-visible .slot-image {
+    transform: translateY(-1px);
   }
 
   .slot-actions {
@@ -383,6 +451,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: transform 0.12s ease;
   }
 
   .slot-image img {

@@ -12,8 +12,17 @@ type FilledSlot = {
     barcode: string;
     expiry_date: string | null;
     product_name: string | null;
+    brand: string | null;
     image_url: string | null;
+    full_weight_g: number | null;
     current_weight_g: number | null;
+    /**
+     * Free-form OFF metadata (nutriments, ingredients, allergens, etc.)
+     * captured at scan time. May be null on items added before this
+     * field was being persisted; consumers should treat absent keys as
+     * "data not available" rather than "zero".
+     */
+    nutrition_facts: Record<string, unknown> | null;
     /**
      * Recomputed-on-the-fly fullness from current_weight_g and the
      * joined product_catalog (full_weight_g / tare_weight_g). Null when
@@ -92,9 +101,11 @@ export const load: PageServerLoad = async ({ locals, params }) => {
         current_weight_g,
         product_catalog (
           product_name,
+          brand,
           image_url,
           full_weight_g,
-          tare_weight_g
+          tare_weight_g,
+          nutrition_facts
         )
       `,
     )
@@ -115,9 +126,11 @@ export const load: PageServerLoad = async ({ locals, params }) => {
   */
   type CatalogJoin = {
     product_name: string;
+    brand: string | null;
     image_url: string | null;
     full_weight_g: number | null;
     tare_weight_g: number | null;
+    nutrition_facts: Record<string, unknown> | null;
   };
 
   const itemBySlot = new Map<number, FilledSlot["item"]>();
@@ -150,8 +163,11 @@ export const load: PageServerLoad = async ({ locals, params }) => {
       barcode: item.barcode,
       expiry_date: item.expiry_date,
       product_name: catalog?.product_name ?? null,
+      brand: catalog?.brand ?? null,
       image_url: catalog?.image_url ?? null,
+      full_weight_g: catalog?.full_weight_g ?? null,
       current_weight_g: currentWeightG,
+      nutrition_facts: catalog?.nutrition_facts ?? null,
       state,
     });
   }
