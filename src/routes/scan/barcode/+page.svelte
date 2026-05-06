@@ -109,6 +109,12 @@
   let unknownProductBarcode = $state<string | null>(null)
   let lookupNetworkError    = $state(false)
   /**
+   * Diagnostic detail for the network-error branch — kept separate
+   * from user-facing copy so we can show a small "(reason: ...)" hint
+   * without polluting the main message. Empty when no extra info.
+   */
+  let lookupErrorDetail     = $state('')
+  /**
    * When the user opts into manual entry from the "not found" prompt,
    * we stash the scanned barcode here so BarcodeScanner can pre-fill it.
    * Empty string means no pre-fill (default fresh state).
@@ -139,10 +145,28 @@
     saveError   = null
 
     try {
-      const res = await fetch(`/api/product/${encodeURIComponent(barcode)}`)
+      /*
+        Direct client-side call to OpenFoodFacts. We previously routed
+        this through a server-side proxy at /api/product/[barcode] in
+        order to set a custom User-Agent (recommended by OFF for
+        high-volume consumers), but the proxy was unreliable from the
+        Cloudflare Pages deployment — OFF's edge appeared to block or
+        rate-limit requests originating from worker IPs. Browsers can't
+        override User-Agent anyway, so calling OFF directly here matches
+        what the rest of the consumer-facing apps in their docs do.
+
+        TODO: revisit a server-side proxy once we have caching/quotas
+        in place — see https://openfoodfacts.github.io/openfoodfacts-server/api/
+      */
+      const res = await fetch(
+        `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`,
+      )
 
       if (!res.ok) {
-        throw new Error(`Product lookup returned ${res.status}`)
+        const body = await res.text().catch(() => '')
+        throw new Error(
+          `Product lookup returned ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+        )
       }
 
       const data = await res.json()
@@ -170,6 +194,7 @@
       console.error('OpenFoodFacts fetch error:', err)
       unknownProductBarcode = barcode
       lookupNetworkError    = true
+      lookupErrorDetail     = err instanceof Error ? err.message : String(err)
     } finally {
       isFetching = false
     }
@@ -205,6 +230,7 @@
     saveError             = null
     unknownProductBarcode = null
     lookupNetworkError    = false
+    lookupErrorDetail     = ''
     manualEntryBarcode    = ''
   }
 
@@ -220,6 +246,7 @@
     }
     unknownProductBarcode = null
     lookupNetworkError    = false
+    lookupErrorDetail     = ''
   }
 </script>
 
@@ -267,6 +294,12 @@
             <dd>{unknownProductBarcode}</dd>
           </div>
         </dl>
+        {#if lookupNetworkError && lookupErrorDetail}
+          <details class="error-detail-toggle">
+            <summary>Technical details</summary>
+            <pre class="error-detail-body">{lookupErrorDetail}</pre>
+          </details>
+        {/if}
       </div>
 
       <div class="confirm-card__actions">
@@ -568,6 +601,27 @@
 
   .confirm-card__meta-row dt {
     opacity: 0.7;
+  }
+
+  .error-detail-toggle {
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    opacity: 0.75;
+  }
+
+  .error-detail-toggle summary {
+    cursor: pointer;
+  }
+
+  .error-detail-body {
+    margin: 0.5rem 0 0;
+    padding: 0.5rem 0.6rem;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 0.4rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.75rem;
+    line-height: 1.35;
   }
 
   .confirm-card__meta-row dd {
