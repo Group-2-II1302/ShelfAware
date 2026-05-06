@@ -59,7 +59,11 @@
         {#each slotsForZone(zone.slotIndices) as slot (slot.scale_index)}
           <li class="slot">
             {#if slot.status === 'filled'}
-              <article class="slot-card slot-card--filled">
+              <a
+                class="slot-card slot-card--filled"
+                href={`/scan/barcode?shelf_id=${encodeURIComponent(data.shelf.id)}&slot=${slot.scale_index}&replace=1`}
+                aria-label={`Replace product in slot ${slot.scale_index}`}
+              >
                 <p class="slot-index">Slot {slot.scale_index}</p>
                 <h3 class="slot-product">
                   {slot.item.product_name ?? slot.item.barcode}
@@ -78,7 +82,8 @@
                 <p class="slot-expiry">
                   expires: {formatExpiryDate(slot.item.expiry_date)}
                 </p>
-              </article>
+                <p class="slot-action slot-action--replace">Tap to replace</p>
+              </a>
             {:else}
               <a
                 class="slot-card slot-card--empty"
@@ -169,6 +174,28 @@
   .slot-card--empty:hover {
     background: var(--surface);
     border-color: var(--accent);
+  }
+
+  .slot-card--filled {
+    transition:
+      transform 0.12s ease,
+      border-color 0.15s ease;
+    border-color: transparent;
+  }
+
+  .slot-card--filled:hover,
+  .slot-card--filled:focus-visible {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+
+  .slot-action--replace {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.6;
   }
 
   .slot-index {
