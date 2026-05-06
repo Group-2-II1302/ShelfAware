@@ -1,5 +1,5 @@
-import { error, redirect } from "@sveltejs/kit";
-import type { PageServerLoad } from "./$types";
+import { error, fail, redirect } from "@sveltejs/kit";
+import type { Actions, PageServerLoad } from "./$types";
 import { SLOTS_PER_SHELF, getZoneForSlot, type ZoneId } from "$lib/shelf";
 import { computeState } from "$lib/shelfState";
 
@@ -12,6 +12,7 @@ type FilledSlot = {
     barcode: string;
     expiry_date: string | null;
     product_name: string | null;
+    image_url: string | null;
     current_weight_g: number | null;
     /**
      * Recomputed-on-the-fly fullness from current_weight_g and the
@@ -91,6 +92,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
         current_weight_g,
         product_catalog (
           product_name,
+          image_url,
           full_weight_g,
           tare_weight_g
         )
@@ -113,6 +115,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
   */
   type CatalogJoin = {
     product_name: string;
+    image_url: string | null;
     full_weight_g: number | null;
     tare_weight_g: number | null;
   };
@@ -147,6 +150,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
       barcode: item.barcode,
       expiry_date: item.expiry_date,
       product_name: catalog?.product_name ?? null,
+      image_url: catalog?.image_url ?? null,
       current_weight_g: currentWeightG,
       state,
     });
@@ -165,4 +169,56 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     shelf,
     slots,
   };
+};
+
+export const actions: Actions = {
+  /**
+   * Remove the shelf_items row at a given (shelf_id, scale_index).
+   * Used by the per-slot "Delete" button. RLS gates the actual delete
+   * (the user must be a member of the shelf), and the corresponding
+   * delete policy on shelf_items mirrors the membership predicate
+   * used by the existing UPDATE policy.
+   */
+  deleteItem: async ({ request, locals, params }) => {
+    const {
+      data: { user },
+    } = await locals.supabase.auth.getUser();
+    if (!user) {
+      return fail(401, { error: "Not authenticated" });
+    }
+
+    const shelfId = params.shelf_id;
+    const formData = await request.formData();
+    const scaleIndexRaw = formData.get("scale_index")?.toString();
+    const scaleIndex = parseInt(scaleIndexRaw ?? "", 10);
+
+    if (isNaN(scaleIndex) || scaleIndex < 0) {
+      return fail(400, { error: "Invalid slot." });
+    }
+
+    const { data: deletedRows, error: deleteError } = await locals.supabase
+      .from("shelf_items")
+      .delete()
+      .eq("shelf_id", shelfId)
+      .eq("scale_index", scaleIndex)
+      .select("id");
+
+    if (deleteError) {
+      console.error("deleteItem failed:", deleteError.message);
+      return fail(500, { error: deleteError.message });
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      /*
+        Either the slot was already empty (race with another tab) or
+        RLS hid the row from us. Treat both as a no-op success — the
+        page reload below will reflect the actual state either way.
+      */
+      console.warn(
+        `deleteItem: no rows deleted for shelf=${shelfId} slot=${scaleIndex}`,
+      );
+    }
+
+    return { success: true };
+  },
 };
