@@ -64,7 +64,7 @@ async function buildJwt(
   const keyData = parsePem(privateKeyPem);
   const cryptoKey = await crypto.subtle.importKey(
     "pkcs8",
-    keyData,
+    keyData.buffer as ArrayBuffer,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["sign"],
@@ -73,7 +73,7 @@ async function buildJwt(
   const sigBytes = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     cryptoKey,
-    new TextEncoder().encode(toSign) as unknown as ArrayBuffer,
+    new TextEncoder().encode(toSign),
   );
 
   return `${toSign}.${b64urlFromBytes(new Uint8Array(sigBytes))}`;
