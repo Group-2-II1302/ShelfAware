@@ -28,14 +28,18 @@ function b64urlFromBytes(bytes: Uint8Array): string {
  * Parse a PEM private key string from an environment variable.
  * Handles both real newlines and the literal "\n" that .env files produce.
  */
-function parsePem(raw: string): Uint8Array {
+function parsePem(raw: string): ArrayBuffer {
   const pem = raw
     .replace(/\\n/g, "\n") // literal \n from .env
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s+/g, ""); // strip all whitespace / newlines
 
-  return Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
+  const bytes = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
 
 /**
@@ -64,7 +68,7 @@ async function buildJwt(
   const keyData = parsePem(privateKeyPem);
   const cryptoKey = await crypto.subtle.importKey(
     "pkcs8",
-    keyData.buffer as ArrayBuffer,
+    keyData,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["sign"],
