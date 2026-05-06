@@ -1,13 +1,15 @@
 <script lang="ts">
   import type { PageData } from './$types'
+  import { ZONES } from '$lib/shelf'
+  import {
+    bucketFromState,
+    BUCKET_LABEL,
+    NOT_CALIBRATED_LABEL,
+  } from '$lib/shelfState'
 
   let { data }: { data: PageData } = $props()
 
   const dateFormatter = new Intl.DateTimeFormat('en-GB')
-
-  function getProductName(item: PageData['items'][number]) {
-    return item.product_catalog?.[0]?.product_name ?? item.barcode
-  }
 
   function formatExpiryDate(expiryDate: string | null) {
     if (!expiryDate) {
@@ -15,6 +17,27 @@
     }
 
     return dateFormatter.format(new Date(expiryDate))
+  }
+
+  function formatWeight(grams: number | null) {
+    if (grams === null) return null
+    return `${Math.round(grams)} g`
+  }
+
+  function stateLabel(state: number | null) {
+    const bucket = bucketFromState(state)
+    return bucket === null ? NOT_CALIBRATED_LABEL : BUCKET_LABEL[bucket]
+  }
+
+  function stateModifier(state: number | null) {
+    const bucket = bucketFromState(state)
+    return bucket === null ? 'uncalibrated' : bucket
+  }
+
+  function slotsForZone(zoneSlotIndices: readonly number[]) {
+    return zoneSlotIndices
+      .map((i) => data.slots.find((s) => s.scale_index === i))
+      .filter((s): s is PageData['slots'][number] => s !== undefined)
   }
 </script>
 
@@ -29,30 +52,47 @@
     </h1>
   </header>
 
-  {#if data.items.length === 0}
-    <section class="empty-shelf">
-      <p>
-        This shelf is empty.
-      </p>
+  {#each ZONES as zone (zone.id)}
+    <section class="zone">
+      <h2 class="zone-title">{zone.label}</h2>
+      <ul class="slot-list">
+        {#each slotsForZone(zone.slotIndices) as slot (slot.scale_index)}
+          <li class="slot">
+            {#if slot.status === 'filled'}
+              <article class="slot-card slot-card--filled">
+                <p class="slot-index">Slot {slot.scale_index}</p>
+                <h3 class="slot-product">
+                  {slot.item.product_name ?? slot.item.barcode}
+                </h3>
+                <p class="slot-state slot-state--{stateModifier(slot.item.state)}">
+                  <span class="slot-state__dot" aria-hidden="true"></span>
+                  <span class="slot-state__label">
+                    {stateLabel(slot.item.state)}
+                  </span>
+                  {#if formatWeight(slot.item.current_weight_g)}
+                    <span class="slot-weight">
+                      · {formatWeight(slot.item.current_weight_g)}
+                    </span>
+                  {/if}
+                </p>
+                <p class="slot-expiry">
+                  expires: {formatExpiryDate(slot.item.expiry_date)}
+                </p>
+              </article>
+            {:else}
+              <a
+                class="slot-card slot-card--empty"
+                href={`/scan/barcode?shelf_id=${encodeURIComponent(data.shelf.id)}&slot=${slot.scale_index}`}
+              >
+                <p class="slot-index">Slot {slot.scale_index}</p>
+                <p class="slot-action">+ Add product</p>
+              </a>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     </section>
-  {:else}
-    <ul class="item-list">
-      {#each data.items as item (item.id)}
-        <li class="item-card">
-          <div class="item-card__content">
-            <h2 class="item-card__title">
-              {getProductName(item)}
-            </h2>
-
-            <p class="item-card__expiry">
-              expires:
-              {formatExpiryDate(item.expiry_date)}
-            </p>
-          </div>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+  {/each}
 </main>
 
 <style>
@@ -72,63 +112,143 @@
     line-height: 1.2;
   }
 
-  .item-list {
+  .zone {
+    margin-bottom: 1.5rem;
+  }
+
+  .zone-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+  }
+
+  .slot-list {
     list-style: none;
     margin: 0;
     padding: 0;
-
     display: grid;
-    gap: 1rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
   }
 
-  .item-card {
-    background: var(--surface);
-    border-radius: 1rem;
-
-    padding: 1.25rem;
-
-    min-height: 6rem;
-
-    display: flex;
-    align-items: center;
-
-    box-sizing: border-box;
+  @media (max-width: 480px) {
+    .slot-list {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
-  .item-card__content {
-    width: 100%;
-  }
-
-  .item-card__title {
+  .slot {
     margin: 0;
+    display: flex;
+  }
 
+  .slot-card {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid transparent;
+    border-radius: 1rem;
+    padding: 1rem;
+    min-height: 6rem;
+    box-sizing: border-box;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .slot-card--empty {
+    border: 1px dashed var(--border);
+    background: transparent;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .slot-card--empty:hover {
+    background: var(--surface);
+    border-color: var(--accent);
+  }
+
+  .slot-index {
+    margin: 0 0 0.25rem;
+    font-size: 0.75rem;
+    opacity: 0.6;
+  }
+
+  .slot-product {
+    margin: 0;
     font-size: 1rem;
     line-height: 1.3;
-
     overflow-wrap: anywhere;
   }
 
-  .item-card__expiry {
-    margin: 0.5rem 0 0 0;
+  .slot-state {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.3;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
 
+  .slot-state__dot {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--state-color, currentColor);
+  }
+
+  .slot-state__label {
+    color: var(--state-color, inherit);
+    font-weight: 500;
+  }
+
+  .slot-state--empty {
+    --state-color: #c0392b;
+  }
+
+  .slot-state--low {
+    --state-color: #e67e22;
+  }
+
+  .slot-state--half {
+    --state-color: #b8860b;
+  }
+
+  .slot-state--mostly_full {
+    --state-color: #4a8a3f;
+  }
+
+  .slot-state--full {
+    --state-color: #2e7d32;
+  }
+
+  .slot-state--uncalibrated {
+    --state-color: #888;
+    font-style: italic;
+    opacity: 0.85;
+  }
+
+  .slot-weight {
+    opacity: 0.7;
+    color: var(--text);
+  }
+
+  .slot-expiry {
+    margin: 0.35rem 0 0;
     font-size: 0.875rem;
     line-height: 1.3;
-
     overflow-wrap: anywhere;
   }
 
-  .empty-shelf {
-    background: var(--surface);
-
-    border-radius: 1rem;
-
-    padding: 1.25rem;
-
-    box-sizing: border-box;
-  }
-
-  .empty-shelf p {
+  .slot-action {
     margin: 0;
+    font-size: 0.95rem;
+    opacity: 0.85;
   }
 
   @media (min-width: 768px) {

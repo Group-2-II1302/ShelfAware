@@ -21,11 +21,67 @@
 
   // ── Product state ────────────────────────────────────────────────────────────
   type ProductCatalogEntry = {
-    barcode:      string
-    product_name: string
-    brand:        string
-    image_url:    string
-    full_weight_g: number
+    barcode:         string
+    product_name:    string
+    brand:           string
+    image_url:       string
+    full_weight_g:   number
+    /**
+     * Free-form metadata from OpenFoodFacts (nutriments, ingredients, etc.).
+     * Stored as JSON in product_catalog.nutrition_facts. Null when the
+     * product wasn't found or when entered manually.
+     */
+    nutrition_facts: Record<string, unknown> | null
+  }
+
+  /**
+   * OpenFoodFacts exposes weight in several fields, none of which are
+   * reliably present on every product. Try them in order of reliability.
+   */
+  function extractWeightG(p: any): number {
+    // Most reliable: numeric grams when OFF has parsed it themselves
+    const productQuantity = parseFloat(p.product_quantity)
+    if (!isNaN(productQuantity) && productQuantity > 0) return productQuantity
+
+    // Fallback: parse the human-readable "quantity" string ("200 g", "1 kg")
+    const q: string = p.quantity ?? ''
+    const match = q.match(/([\d.]+)\s*(kg|g|ml|l)?/i)
+    if (match) {
+      const n = parseFloat(match[1])
+      const unit = (match[2] || 'g').toLowerCase()
+      if (!isNaN(n) && n > 0) {
+        if (unit === 'kg' || unit === 'l') return n * 1000
+        return n
+      }
+    }
+
+    // Last resort: net_weight_value (often empty/inconsistent)
+    const netWeight = parseFloat(p.net_weight_value)
+    if (!isNaN(netWeight) && netWeight > 0) return netWeight
+
+    return 0
+  }
+
+  /**
+   * Pull the interesting nutritional & metadata fields off OpenFoodFacts'
+   * response. We deliberately copy-and-pick rather than store the whole
+   * `product` blob — OFF responses are huge and most fields are noise.
+   */
+  function extractNutritionFacts(p: any): Record<string, unknown> {
+    return {
+      nutriments:                p.nutriments              ?? null,
+      ingredients_text:          p.ingredients_text        ?? null,
+      allergens_tags:            p.allergens_tags          ?? null,
+      labels_tags:               p.labels_tags             ?? null,
+      categories_tags:           p.categories_tags         ?? null,
+      nova_group:                p.nova_group              ?? null,
+      nutriscore_grade:          p.nutriscore_grade        ?? null,
+      ecoscore_grade:            p.ecoscore_grade          ?? null,
+      serving_size:              p.serving_size            ?? null,
+      quantity:                  p.quantity                ?? null,
+      packaging_tags:            p.packaging_tags          ?? null,
+      countries_tags:            p.countries_tags          ?? null,
+    }
   }
 
   let foundProduct = $state<ProductCatalogEntry | null>(null)
@@ -71,12 +127,12 @@
       if (data.status === 1) {
         const p = data.product
         foundProduct = {
-          barcode:       data.code,
-          product_name:  p.product_name          || 'Unknown',
-          brand:         p.brands                || '',
-          image_url:     p.image_front_url       || '',
-          // OpenFoodFacts net_weight_value is sometimes a string — coerce safely
-          full_weight_g: parseFloat(p.net_weight_value) || 0,
+          barcode:         data.code,
+          product_name:    p.product_name    || 'Unknown',
+          brand:           p.brands          || '',
+          image_url:       p.image_front_url || '',
+          full_weight_g:   extractWeightG(p),
+          nutrition_facts: extractNutritionFacts(p),
         }
       } else {
         // Product not in OpenFoodFacts — pre-fill the barcode and let user
@@ -84,10 +140,11 @@
         fetchError = 'Product not found in catalog. Please enter details manually.'
         foundProduct = {
           barcode,
-          product_name: '',
-          brand:        '',
-          image_url:    '',
-          full_weight_g: 0,
+          product_name:    '',
+          brand:           '',
+          image_url:       '',
+          full_weight_g:   0,
+          nutrition_facts: null,
         }
         // Do NOT set full foundProduct here — product_name is empty so the
         // $effect guard above will NOT auto-submit. The user must fill in
@@ -97,7 +154,14 @@
       console.error('OpenFoodFacts fetch error:', err)
       fetchError = 'Could not reach product catalog. Please enter details manually.'
       // Same pattern — empty product_name prevents auto-submit
-      foundProduct = { barcode, product_name: '', brand: '', image_url: '', full_weight_g: 0 }
+      foundProduct = {
+        barcode,
+        product_name:    '',
+        brand:           '',
+        image_url:       '',
+        full_weight_g:   0,
+        nutrition_facts: null,
+      }
     } finally {
       isFetching = false
     }
@@ -109,11 +173,12 @@
   const handleManualSave = (manualData: Partial<ProductCatalogEntry>) => {
     saveError = null
     foundProduct = {
-      barcode:       manualData.barcode      || '',
-      product_name:  manualData.product_name || '',
-      brand:         manualData.brand        || '',
-      image_url:     manualData.image_url    || '',
-      full_weight_g: manualData.full_weight_g ?? 0,
+      barcode:         manualData.barcode         || '',
+      product_name:    manualData.product_name    || '',
+      brand:           manualData.brand           || '',
+      image_url:       manualData.image_url       || '',
+      full_weight_g:   manualData.full_weight_g   ?? 0,
+      nutrition_facts: manualData.nutrition_facts ?? null,
     }
     // product_name is now set — $effect will fire and submit the form
   }
@@ -204,11 +269,16 @@
     <input type="hidden" name="shelf_id"     value={shelf_id} />
     <input type="hidden" name="scale_index"  value={scale_index} />
 
-    <input type="hidden" name="barcode"       value={foundProduct?.barcode       ?? ''} />
-    <input type="hidden" name="product_name"  value={foundProduct?.product_name  ?? ''} />
-    <input type="hidden" name="brand"         value={foundProduct?.brand         ?? ''} />
-    <input type="hidden" name="image_url"     value={foundProduct?.image_url     ?? ''} />
-    <input type="hidden" name="full_weight_g" value={foundProduct?.full_weight_g ?? 0}  />
+    <input type="hidden" name="barcode"         value={foundProduct?.barcode         ?? ''} />
+    <input type="hidden" name="product_name"    value={foundProduct?.product_name    ?? ''} />
+    <input type="hidden" name="brand"           value={foundProduct?.brand           ?? ''} />
+    <input type="hidden" name="image_url"       value={foundProduct?.image_url       ?? ''} />
+    <input type="hidden" name="full_weight_g"   value={foundProduct?.full_weight_g   ?? 0}  />
+    <input
+      type="hidden"
+      name="nutrition_facts"
+      value={foundProduct?.nutrition_facts ? JSON.stringify(foundProduct.nutrition_facts) : ''}
+    />
   </form>
 
 </div>
