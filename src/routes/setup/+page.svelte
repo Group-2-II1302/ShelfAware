@@ -50,16 +50,16 @@
         <h2>Set up your device</h2>
         <div>
             <div>
-                1. Make sure you're connected to your device's WiFi hot spot
+                1. Make sure you're connected to your device's WiFi hot spot.
             </div>
             <div>
-                2. Open the <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">device page</a>
+                2. Open the <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">device page</a>.
             </div>
             <div>
-                3. Fill in the relevant information
+                3. Fill in the relevant information.
             </div>
             <div>
-                4. Click the button below once you have finished the steps above
+                4. Click the button below once you have finished the steps above.
             </div>
     </div>
 
