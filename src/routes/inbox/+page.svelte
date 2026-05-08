@@ -123,6 +123,16 @@
           }
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'alerts' },
+        (payload) => {
+          const old = payload.old as { id?: string }
+          if (!old?.id || !(old.id in liveById)) return
+          const { [old.id]: _, ...rest } = liveById
+          liveById = rest
+        },
+      )
       .subscribe()
   })
 

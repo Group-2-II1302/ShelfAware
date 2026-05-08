@@ -143,6 +143,28 @@
           }
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'alerts' },
+        (payload) => {
+          /*
+            DELETE payload.old only has full columns when the table
+            has REPLICA IDENTITY FULL. With the default we still get
+            the id, so we can always dismiss any visible toast for
+            this alert. We only decrement the badge when we know the
+            row was unread+unresolved.
+          */
+          const old = payload.old as {
+            id?: string
+            read_at?: string | null
+            resolved_at?: string | null
+          }
+          if (!old?.id) return
+          dismissToast(old.id)
+          const wasUnread = !old.read_at && !old.resolved_at
+          if (wasUnread) unreadAlerts.decrement()
+        },
+      )
       .subscribe()
   })
 
