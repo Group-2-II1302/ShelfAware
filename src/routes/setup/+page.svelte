@@ -61,6 +61,7 @@
                 4. Fill in the relevant information.
             </div>
     </div>
+</div>
 
 {:else if $setupState.step === "waiting"}
     <ConnectingStep />
