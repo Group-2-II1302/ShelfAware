@@ -18,12 +18,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 
   if (shelvesError) throw error(500, shelvesError.message);
 
-  const shelfIds = shelves?.map(s => s.id) ?? [];
+  const shelfIds = shelves?.map((s) => s.id) ?? [];
 
   // 2. items
   const { data: items, error: itemsError } = await locals.supabase
     .from("shelf_items")
-    .select(`
+    .select(
+      `
       id,
       barcode,
       expiry_date,
@@ -35,7 +36,8 @@ export const load: PageServerLoad = async ({ locals }) => {
         full_weight_g,
         tare_weight_g
       )
-    `)
+    `,
+    )
     .in("shelf_id", shelfIds);
 
   if (itemsError) throw error(500, itemsError.message);
@@ -44,9 +46,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   const slotsByShelf: Record<string, any[]> = {};
 
   for (const shelf of shelves ?? []) {
-    const shelfItems = (items ?? []).filter(
-      i => i.shelf_id === shelf.id
-    );
+    const shelfItems = (items ?? []).filter((i) => i.shelf_id === shelf.id);
 
     const bySlot = new Map<number, any>();
 
@@ -63,7 +63,7 @@ export const load: PageServerLoad = async ({ locals }) => {
         state: computeState(
           item.current_weight_g ?? null,
           catalog?.full_weight_g ?? null,
-          catalog?.tare_weight_g ?? null
+          catalog?.tare_weight_g ?? null,
         ),
       });
     }
