@@ -1,5 +1,7 @@
 import { supabase } from "./supabaseClient";
 
+const WORKER_URL = "https://shelfaware-backend.emanuel-diktonius.workers.dev";
+
 async function authFetch(input: string, init: RequestInit = {}) {
     const {
         data: { session }
@@ -9,15 +11,13 @@ async function authFetch(input: string, init: RequestInit = {}) {
         throw new Error("NOT_AUTHENTICATED");
     }
 
-    const res = await fetch(input, {
+    return fetch(input, {
         ...init,
         headers: {
-        ...(init.headers || {}),
-        Authorization: `Bearer ${session.access_token}`
+            ...(init.headers || {}),
+            Authorization: `Bearer ${session.access_token}`
         }
     });
-
-    return res;
 }
 
 export type ShelfSummary = {
@@ -35,7 +35,7 @@ export type ShelfDetail = {
 };
 
 export async function getShelves(): Promise<ShelfSummary[]> {
-    const res = await authFetch("/api/shelves");
+    const res = await authFetch(`${WORKER_URL}/shelves`);
 
     if (res.status === 401) throw new Error("UNAUTHORIZED");
 
@@ -47,7 +47,7 @@ export async function getShelves(): Promise<ShelfSummary[]> {
 }
 
 export async function getShelf(shelfId: string): Promise<ShelfDetail> {
-    const res = await fetch(`/api/shelves/`);
+    const res = await authFetch(`${WORKER_URL}/shelves/${shelfId}`);
 
     if (res.status === 404) throw new Error("Shelf not found");
 

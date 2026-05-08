@@ -1,5 +1,8 @@
 import { supabase } from "../supabaseClient";
 
+
+const WORKER_URL = "https://shelfaware-backend.emanuel-diktonius.workers.dev";
+
 type Shelf = {
     shelf_id: string;
     name: string;
@@ -36,10 +39,7 @@ export async function waitForNewShelf(
 
         try {
 
-            const res = await fetch("/api/shelves", {
-                headers,
-                signal
-            });
+            const res = await fetch(`${WORKER_URL}/shelves`);
 
             if (res.ok) {
 
