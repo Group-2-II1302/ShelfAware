@@ -24,7 +24,6 @@
                 error: undefined
             });
 
-            goto(`/shelves/${shelfId}`);
         } catch (e: any) {
             setupState.set({
                 step: "error",
@@ -47,27 +46,22 @@
 
 {#if $setupState.step === "idle"}
     <div>
-        <h2>Set up your device</h2>
+        <h2>How to set up your device</h2>
         <div>
             <div>
-                1. Make sure you're connected to your device's WiFi hot spot.
+                1. Plug in your device to a power source.
             </div>
             <div>
-                2. Open the <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer">device page</a>.
+                2. Connect to your device's WiFi hot spot: "ShelfAware_setup".
             </div>
             <div>
-                3. Fill in the relevant information.
+                3. Open the <a href="http://192.168.4.1" target="_blank" rel="noopener noreferrer" onclick={startSetup}>device page</a>.
             </div>
             <div>
-                4. Click the button below once you have finished the steps above.
+                4. Fill in the relevant information.
             </div>
     </div>
 
-        <button
-        onclick={startSetup}>
-            I've completed setup
-        </button>
-    </div>
 {:else if $setupState.step === "waiting"}
     <ConnectingStep />
 {:else if $setupState.step === "success"}
