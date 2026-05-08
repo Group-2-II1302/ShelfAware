@@ -45,11 +45,25 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
         lastSyncedAt = lastLog?.recorded_at ?? null;
       }
 
-      return { ...shelf, lastSyncedAt, hasItems: itemIds.length > 0 };
+      return { ...shelf, lastSyncedAt, hasItems: itemIds.length > 0, itemIds };
     }),
   );
 
+  /*
+    Flat item_id → shelf_id index so the client can route incoming
+    weight_logs realtime events to the right dashboard row without
+    a round-trip. Computed here because the per-shelf itemIds were
+    already in scope.
+  */
+  const itemShelfMap: Record<string, string> = {};
+  for (const shelf of shelvesWithSync) {
+    for (const id of shelf.itemIds) {
+      itemShelfMap[id] = shelf.id;
+    }
+  }
+
   return {
     shelves: shelvesWithSync,
+    itemShelfMap,
   };
 };

@@ -15,6 +15,12 @@ type FilledSlot = {
     brand: string | null;
     image_url: string | null;
     full_weight_g: number | null;
+    /**
+     * Tare weight (empty container) from product_catalog. Carried
+     * through so the client can recompute fullness in response to
+     * live shelf_items updates without an extra round trip.
+     */
+    tare_weight_g: number | null;
     current_weight_g: number | null;
     /**
      * Free-form OFF metadata (nutriments, ingredients, allergens, etc.)
@@ -172,6 +178,7 @@ export const load: PageServerLoad = async ({ locals, params, depends }) => {
       brand: catalog?.brand ?? null,
       image_url: catalog?.image_url ?? null,
       full_weight_g: catalog?.full_weight_g ?? null,
+      tare_weight_g: catalog?.tare_weight_g ?? null,
       current_weight_g: currentWeightG,
       nutrition_facts: catalog?.nutrition_facts ?? null,
       state,

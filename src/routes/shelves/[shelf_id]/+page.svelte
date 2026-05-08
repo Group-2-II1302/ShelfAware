@@ -8,6 +8,7 @@
     bucketFromState,
     BUCKET_LABEL,
     NOT_CALIBRATED_LABEL,
+    computeState,
   } from '$lib/shelfState'
   import ProductDetailsModal from '$lib/components/ProductDetailsModal.svelte'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
@@ -34,14 +35,43 @@
     }
   })
 
+  /*
+    Live overrides keyed by shelf_items.id. When the Pi updates a row,
+    we patch the slot card from the realtime payload and skip the
+    server round-trip for the common case (just a weight reading
+    bumping current_weight_g). Cleared whenever a fresh server load
+    arrives, so any divergence self-heals.
+  */
+  type LiveItemPatch = {
+    current_weight_g: number | null
+    state: number | null
+  }
+  let liveItemPatches = $state<Record<string, LiveItemPatch>>({})
+
+  $effect(() => {
+    /*
+      Discard local patches once the server load reflects them (or
+      anything newer). Track the slot identity so we don't endlessly
+      reset state during a single render pass.
+    */
+    void data.slots
+    liveItemPatches = {}
+  })
+
   let invalidateTimer: ReturnType<typeof setTimeout> | undefined
 
   function scheduleRefresh() {
+    /*
+      Safety-net invalidate. Optimistic patches above usually cover
+      the common case; this catches everything else (an item removed
+      by another client, calibration change in product_catalog, etc.)
+      without us having to subscribe to every related table.
+    */
     if (invalidateTimer) return
     invalidateTimer = setTimeout(() => {
       invalidateTimer = undefined
       invalidate('app:shelf-detail')
-    }, 4_000)
+    }, 30_000)
   }
 
   let channel: ReturnType<typeof data.supabase.channel> | undefined
@@ -49,7 +79,7 @@
   onMount(() => {
     if (data.itemIds.length === 0) return
     channel = data.supabase
-      .channel(`shelf-${data.shelf.id}-weight-logs`)
+      .channel(`shelf-${data.shelf.id}-live`)
       .on(
         'postgres_changes',
         {
@@ -57,8 +87,8 @@
           schema: 'public',
           table: 'weight_logs',
           /*
-            Postgres-changes server-side filter only supports a single
-            equality, so we receive every weight_logs insert and filter
+            postgres_changes filter only supports a single equality,
+            so we receive every weight_logs insert and filter
             client-side against the items we care about. Cheap.
           */
         },
@@ -68,7 +98,48 @@
           if (row.recorded_at && (!liveLastSyncedAt || row.recorded_at > liveLastSyncedAt)) {
             liveLastSyncedAt = row.recorded_at
           }
-          scheduleRefresh()
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'shelf_items',
+          filter: `shelf_id=eq.${data.shelf.id}`,
+        },
+        (payload) => {
+          const row = payload.new as {
+            id?: string
+            current_weight_g?: number | null
+          }
+          if (!row?.id) return
+
+          /*
+            Find the calibration values from the initial server load
+            so we can recompute fullness state with the same formula
+            the server uses. If the item isn't in our load (e.g. it
+            was added by someone else), fall through to a refresh.
+          */
+          const slot = data.slots.find(
+            (s) => s.status === 'filled' && s.item.id === row.id,
+          )
+          if (!slot || slot.status !== 'filled') {
+            scheduleRefresh()
+            return
+          }
+
+          const newWeight = row.current_weight_g ?? null
+          const newState = computeState(
+            newWeight,
+            slot.item.full_weight_g,
+            slot.item.tare_weight_g,
+          )
+
+          liveItemPatches = {
+            ...liveItemPatches,
+            [row.id]: { current_weight_g: newWeight, state: newState },
+          }
         },
       )
       .subscribe()
@@ -133,10 +204,31 @@
     return bucket === null ? 'uncalibrated' : bucket
   }
 
+  /*
+    Apply any pending live patches when reading slots, so the rendered
+    card reflects the freshest weight/state we've heard about even
+    when no server load has run yet. Patches are keyed by item id, so
+    a slot replaced by another user invalidates the patch automatically.
+  */
+  function patchSlot(slot: PageData['slots'][number]) {
+    if (slot.status !== 'filled') return slot
+    const patch = liveItemPatches[slot.item.id]
+    if (!patch) return slot
+    return {
+      ...slot,
+      item: {
+        ...slot.item,
+        current_weight_g: patch.current_weight_g,
+        state: patch.state,
+      },
+    }
+  }
+
   function slotsForZone(zoneSlotIndices: readonly number[]) {
     return zoneSlotIndices
       .map((i) => data.slots.find((s) => s.scale_index === i))
       .filter((s): s is PageData['slots'][number] => s !== undefined)
+      .map(patchSlot)
   }
 </script>
 

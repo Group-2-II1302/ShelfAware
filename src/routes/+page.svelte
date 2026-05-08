@@ -32,13 +32,11 @@
   })
 
   /*
-    To map an incoming weight_logs row (which only has item_id) back
-    to the shelf it belongs to, we'd normally need a second query.
-    Cheaper path: look at all item_ids the server load already knew
-    about per shelf. The server load doesn't expose those today;
-    rather than adding a second round-trip, we listen broadly to
-    weight_logs and trigger a SvelteKit invalidation that re-runs
-    the load. Throttled below so a chatty Pi doesn't hammer us.
+    Safety-net invalidate. Optimistic patches below cover the common
+    case (Pi inserts a weight_logs row → bump the matching shelf's
+    lastSyncedAt). This catches everything else — items added or
+    removed by another client, new shelves appearing, etc. — without
+    us subscribing to every related table.
   */
   let invalidateTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -47,18 +45,37 @@
     invalidateTimer = setTimeout(() => {
       invalidateTimer = undefined
       invalidate('app:shelves')
-    }, 4_000)
+    }, 30_000)
   }
 
   let channel: ReturnType<typeof data.supabase.channel> | undefined
 
   onMount(() => {
     channel = data.supabase
-      .channel('dashboard-weight-logs')
+      .channel('dashboard-live')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'weight_logs' },
-        () => scheduleRefresh(),
+        (payload) => {
+          const row = payload.new as { item_id?: string; recorded_at?: string }
+          /*
+            Map item_id back to the shelf via the index we built at
+            load time. If we don't recognise the item, it's probably
+            a brand new shelf added by another client — fall back to
+            a refresh so the row appears.
+          */
+          const shelfId = row?.item_id ? data.itemShelfMap[row.item_id] : undefined
+          if (!shelfId) {
+            scheduleRefresh()
+            return
+          }
+          if (
+            row.recorded_at &&
+            (!liveSyncBy[shelfId] || row.recorded_at > liveSyncBy[shelfId]!)
+          ) {
+            liveSyncBy = { ...liveSyncBy, [shelfId]: row.recorded_at }
+          }
+        },
       )
       .subscribe()
   })
