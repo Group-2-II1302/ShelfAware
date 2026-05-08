@@ -1,7 +1,7 @@
 import { supabase } from "../supabaseClient";
 
-
-const WORKER_URL = "https://shelfaware-backend.emanuel-diktonius.workers.dev";
+const WORKER_URL =
+  "https://shelfaware-backend.emanuel-diktonius.workers.dev";
 
 type Shelf = {
     shelf_id: string;
@@ -20,7 +20,7 @@ export async function waitForNewShelf(
     const jwt = data.session?.access_token;
 
     if (!jwt) {
-        throw new Error("Not authenticated");
+        throw new Error("NOT_AUTHENTICATED");
     }
 
     const headers = {
@@ -28,7 +28,6 @@ export async function waitForNewShelf(
     };
 
     const setupStartedAt = Date.now();
-
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -38,11 +37,17 @@ export async function waitForNewShelf(
         }
 
         try {
+            const res = await fetch(`${WORKER_URL}/shelves`, {
+                headers
+            });
 
-            const res = await fetch(`${WORKER_URL}/shelves`);
+            if (res.status === 401) {
+                // auth not ready yet → retry instead of failing
+                await sleep(pollIntervalMs);
+                continue;
+            }
 
             if (res.ok) {
-
                 const data: { shelves: Shelf[] } = await res.json();
 
                 const fresh = data.shelves.find((s) => {
@@ -62,7 +67,7 @@ export async function waitForNewShelf(
                 throw e;
             }
 
-            // Ignore transient connectivity issues
+            // Ignore transient network failures (WiFi switching, captive portal, etc.)
         }
 
         await sleep(pollIntervalMs);

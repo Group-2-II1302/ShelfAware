@@ -2,23 +2,37 @@ import { supabase } from "./supabaseClient";
 
 const WORKER_URL = "https://shelfaware-backend.emanuel-diktonius.workers.dev";
 
-async function authFetch(input: string, init: RequestInit = {}) {
-    const {
-        data: { session }
-    } = await supabase.auth.getSession();
+let cachedToken: string | null = null;
 
-    if (!session?.access_token) {
-        throw new Error("NOT_AUTHENTICATED");
+async function getToken(): Promise<string> {
+    if (cachedToken) return cachedToken;
+
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? null;
+
+    if (!token) {
+        throw new Error("AUTH_NOT_READY");
     }
+
+    cachedToken = token;
+    return token;
+}
+
+async function authFetch(input: string, init: RequestInit = {}) {
+    const token = await getToken();
+
+    const headers = new Headers(init.headers || {});
+    headers.set("Authorization", `Bearer ${token}`);
 
     return fetch(input, {
         ...init,
-        headers: {
-            ...(init.headers || {}),
-            Authorization: `Bearer ${session.access_token}`
-        }
+        headers
     });
 }
+
+// -----------------------------
+// Types
+// -----------------------------
 
 export type ShelfSummary = {
     shelf_id: string;
@@ -34,12 +48,20 @@ export type ShelfDetail = {
     }>;
 };
 
+// -----------------------------
+// API
+// -----------------------------
+
 export async function getShelves(): Promise<ShelfSummary[]> {
     const res = await authFetch(`${WORKER_URL}/shelves`);
 
-    if (res.status === 401) throw new Error("UNAUTHORIZED");
+    if (res.status === 401) {
+        throw new Error("UNAUTHORIZED");
+    }
 
-    if (!res.ok) throw new Error("SHELVES_FETCH_FAILED");
+    if (!res.ok) {
+        throw new Error("SHELVES_FETCH_FAILED");
+    }
 
     const data = await res.json();
 
@@ -49,11 +71,17 @@ export async function getShelves(): Promise<ShelfSummary[]> {
 export async function getShelf(shelfId: string): Promise<ShelfDetail> {
     const res = await authFetch(`${WORKER_URL}/shelves/${shelfId}`);
 
-    if (res.status === 404) throw new Error("Shelf not found");
+    if (res.status === 404) {
+        throw new Error("SHELF_NOT_FOUND");
+    }
 
-    if (res.status === 401) throw new Error("Unauthorized");
-    
-    if (!res.ok) throw new Error("Shelf fetch failed");
-    
-    return res.json()
+    if (res.status === 401) {
+        throw new Error("UNAUTHORIZED");
+    }
+
+    if (!res.ok) {
+        throw new Error("SHELF_FETCH_FAILED");
+    }
+
+    return res.json();
 }
