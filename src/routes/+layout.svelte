@@ -6,9 +6,10 @@
 
   import Navbar from '$lib/components/Navbar.svelte'
   import Menu from '$lib/components/Menu.svelte'
+  import AlertsListener from '$lib/components/AlertsListener.svelte'
 
   let { data, children } = $props()
-  let { supabase, claims } = $derived(data)
+  let { supabase, claims, unreadAlertCount } = $derived(data)
 
   onMount(() => {
     const { data } = supabase.auth.onAuthStateChange((event, _session) => {
@@ -29,3 +30,7 @@
 {@render children()}
 
 <Menu />
+
+{#if claims}
+  <AlertsListener {supabase} initialUnread={unreadAlertCount ?? 0} />
+{/if}
