@@ -5,17 +5,7 @@
   export interface ScannerProps {
     onscan: (barcode: string) => void | Promise<void>;
     onManualSave: (data: any) => void;
-    /**
-     * If 'manual', the component opens directly in the manual entry form
-     * (used when a scanned barcode wasn't found in OpenFoodFacts and
-     * the user has elected to enter the rest by hand). Defaults to 'scan'.
-     */
     initialMode?: 'scan' | 'manual';
-    /**
-     * Optional barcode value to pre-populate in the manual form. Useful
-     * when redirecting into manual entry after a failed lookup so the
-     * user doesn't have to re-type a long barcode.
-     */
     prefilledBarcode?: string;
   }
 
@@ -25,6 +15,7 @@
     initialMode = 'scan',
     prefilledBarcode = '',
   }: ScannerProps = $props();
+
   let scanner: Html5Qrcode | null = null;
   let readerElement = $state<HTMLElement | undefined>(undefined);
 
@@ -34,36 +25,53 @@
   let handled = $state(false);
   let scanSucceeded = $state(false);
   let errorMessage = $state<string | null>(null);
-  let mode = $state<'scan' | 'manual'>(initialMode);
+
+  // Mutable UI state
+  let mode = $state<'scan' | 'manual'>('scan');
 
   let formData = $state({
-    barcode: prefilledBarcode,
+    barcode: '',
     product_name: '',
     brand: '',
     image_url: '',
     full_weight_g: 0
   });
 
+  // Keep state synced with prop updates
+  $effect(() => {
+    mode = initialMode;
+  });
+
+  $effect(() => {
+    formData.barcode = prefilledBarcode;
+  });
+
   async function startScanner() {
     if (isStarted || isInitializing || stopping) return;
+
     isInitializing = true;
     errorMessage = null;
     handled = false;
+
     try {
       if (!scanner && readerElement) {
-        scanner = new Html5Qrcode(readerElement.id || 'reader-element');
+        scanner = new Html5Qrcode(readerElement.id);
       }
+
       if (scanner) {
         await scanner.start(
           { facingMode: 'environment' },
-          { fps: 25, qrbox: { width: 250, height: 150 }, aspectRatio: 1.777778 },
+          {
+            fps: 25,
+            qrbox: { width: 250, height: 150 },
+            aspectRatio: 1.777778
+          },
           onScanSuccess,
-          onScanFailure,
+          onScanFailure
         );
+
         isStarted = true;
       }
-    } catch (err: any) {
-      isStarted = false;
     } finally {
       isInitializing = false;
     }
@@ -71,13 +79,13 @@
 
   async function stopScanner() {
     if (!scanner || !isStarted || stopping) return;
+
     stopping = true;
+
     try {
       isStarted = false;
       await scanner.stop();
       await scanner.clear();
-    } catch (err) {
-      console.warn('Cleanup error:', err);
     } finally {
       stopping = false;
       scanSucceeded = false;
@@ -86,23 +94,23 @@
 
   async function onScanSuccess(decodedText: string) {
     if (handled) return;
+
     handled = true;
-    /*
-      Brief visual confirmation before tearing down the camera. Stopping
-      the scanner removes the video feed, so users get no feedback that
-      anything happened — flash a green success overlay first, then stop.
-    */
     scanSucceeded = true;
-    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    await new Promise((r) => setTimeout(r, 450));
+
     await stopScanner();
-    onscan(decodedText);
+
+    await onscan(decodedText);
   }
 
-  function onScanFailure() { }
+  function onScanFailure() {}
 
-  async function handleManualSubmit(e: Event) {
+  function handleManualSubmit(e: Event) {
     e.preventDefault();
-    onManualSave({ ...formData }); 
+
+    onManualSave({ ...formData });
   }
 
   onMount(() => {

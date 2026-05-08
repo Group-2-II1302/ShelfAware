@@ -23,17 +23,19 @@
     other derived state (current_weight_g on shelf_items, fullness
     state) gets recomputed.
   */
-  let liveLastSyncedAt = $state<string | null>(data.lastSyncedAt)
+  let liveLastSyncedAt = $state<string | null>(null);
 
   $effect(() => {
-    /*
-      Pick up server-side updates after invalidation, but never
-      regress past a more-recent realtime value we already have.
-    */
-    if (data.lastSyncedAt && (!liveLastSyncedAt || data.lastSyncedAt > liveLastSyncedAt)) {
-      liveLastSyncedAt = data.lastSyncedAt
+    if (
+      data.lastSyncedAt &&
+      (
+        !liveLastSyncedAt ||
+        data.lastSyncedAt > liveLastSyncedAt
+      )
+    ) {
+      liveLastSyncedAt = data.lastSyncedAt;
     }
-  })
+  });
 
   /*
     Live overrides keyed by shelf_items.id. When the Pi updates a row,

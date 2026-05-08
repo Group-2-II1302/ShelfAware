@@ -1,19 +1,19 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import OcrScanner from '$lib/components/OcrScanner.svelte'; // Make sure path points to your OCR component
 
   // 1. Recover URL parameters passed from the barcode scanner step
-  const shelf_id    = $derived($page.url.searchParams.get('shelf_id') ?? '');
-  const slot        = $derived($page.url.searchParams.get('slot')     ?? '');
-  const barcode     = $derived($page.url.searchParams.get('barcode')  ?? '');
+  const shelf_id    = $derived(page.url.searchParams.get('shelf_id') ?? '');
+  const slot        = $derived(page.url.searchParams.get('slot')     ?? '');
+  const barcode     = $derived(page.url.searchParams.get('barcode')  ?? '');
   /**
    * Truthy when the parent flow flagged this OCR step as a slot
    * replacement. Forwarded verbatim to the saveExpiry action so the
    * server can swap the existing shelf_items row instead of inserting.
    */
-  const replaceMode = $derived($page.url.searchParams.get('replace')  === '1');
+  const replaceMode = $derived(page.url.searchParams.get('replace')  === '1');
 
   const urlParamsValid = $derived(
     shelf_id.length > 0 && slot.length > 0 && barcode.length > 0

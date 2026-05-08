@@ -12,9 +12,7 @@
     server load. Keyed by shelf id; falls back to the value from
     server load on first render.
   */
-  let liveSyncBy = $state<Record<string, string | null>>(
-    Object.fromEntries(data.shelves.map((s) => [s.id, s.lastSyncedAt])),
-  )
+  let liveSyncBy = $state<Record<string, string | null>>({});
 
   /*
     When the server load runs again (e.g. via invalidate) we want the
@@ -23,13 +21,21 @@
   */
   $effect(() => {
     for (const shelf of data.shelves) {
-      const local = liveSyncBy[shelf.id]
-      const fromServer = shelf.lastSyncedAt
-      if (!local || (fromServer && fromServer > local)) {
-        liveSyncBy[shelf.id] = fromServer
+      if (!(shelf.id in liveSyncBy)) {
+        liveSyncBy[shelf.id] = shelf.lastSyncedAt;
+        continue;
+      }
+
+      const local = liveSyncBy[shelf.id];
+
+      if (
+        !local ||
+        (shelf.lastSyncedAt && shelf.lastSyncedAt > local)
+      ) {
+        liveSyncBy[shelf.id] = shelf.lastSyncedAt;
       }
     }
-  })
+  });
 
   /*
     Safety-net invalidate. Optimistic patches below cover the common

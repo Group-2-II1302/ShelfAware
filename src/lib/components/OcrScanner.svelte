@@ -4,10 +4,10 @@
 
   export interface OcrProps {
     /** Called with "DD-MM-YYYY" once the user taps Confirm. */
-    onconfirm: (date: string) => void
+    onDateFound: (date: string) => void
   }
 
-  let { onconfirm }: OcrProps = $props()
+  let { onDateFound }: OcrProps = $props()
 
   // ===== DOM refs =====
   let videoElement = $state<HTMLVideoElement | null>(null)
@@ -200,7 +200,7 @@
   /** User confirmed the detected date — hand it off to the page. */
   function confirmDate() {
     if (!foundDate) return
-    onconfirm(foundDate)
+    onDateFound(foundDate)
   }
 
   /** User rejected the detected date — clear it so they can re-scan. */
