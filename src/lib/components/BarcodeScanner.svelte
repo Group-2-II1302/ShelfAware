@@ -1,13 +1,21 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { Html5Qrcode } from 'html5-qrcode';
-  
+
   export interface ScannerProps {
     onscan: (barcode: string) => void | Promise<void>;
     onManualSave: (data: any) => void;
+    initialMode?: 'scan' | 'manual';
+    prefilledBarcode?: string;
   }
 
-  let { onscan, onManualSave }: ScannerProps = $props();  
+  let {
+    onscan,
+    onManualSave,
+    initialMode = 'scan',
+    prefilledBarcode = '',
+  }: ScannerProps = $props();
+
   let scanner: Html5Qrcode | null = null;
   let readerElement = $state<HTMLElement | undefined>(undefined);
 
@@ -15,7 +23,10 @@
   let isInitializing = $state(false);
   let stopping = $state(false);
   let handled = $state(false);
+  let scanSucceeded = $state(false);
   let errorMessage = $state<string | null>(null);
+
+  // Mutable UI state
   let mode = $state<'scan' | 'manual'>('scan');
 
   let formData = $state({
@@ -26,26 +37,41 @@
     full_weight_g: 0
   });
 
+  // Keep state synced with prop updates
+  $effect(() => {
+    mode = initialMode;
+  });
+
+  $effect(() => {
+    formData.barcode = prefilledBarcode;
+  });
+
   async function startScanner() {
     if (isStarted || isInitializing || stopping) return;
+
     isInitializing = true;
     errorMessage = null;
     handled = false;
+
     try {
       if (!scanner && readerElement) {
-        scanner = new Html5Qrcode(readerElement.id || 'reader-element');
+        scanner = new Html5Qrcode(readerElement.id);
       }
+
       if (scanner) {
         await scanner.start(
           { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.777778 },
+          {
+            fps: 25,
+            qrbox: { width: 250, height: 150 },
+            aspectRatio: 1.777778
+          },
           onScanSuccess,
-          onScanFailure,
+          onScanFailure
         );
+
         isStarted = true;
       }
-    } catch (err: any) {
-      isStarted = false;
     } finally {
       isInitializing = false;
     }
@@ -53,30 +79,38 @@
 
   async function stopScanner() {
     if (!scanner || !isStarted || stopping) return;
+
     stopping = true;
+
     try {
       isStarted = false;
       await scanner.stop();
       await scanner.clear();
-    } catch (err) {
-      console.warn('Cleanup error:', err);
     } finally {
       stopping = false;
+      scanSucceeded = false;
     }
   }
 
   async function onScanSuccess(decodedText: string) {
     if (handled) return;
+
     handled = true;
+    scanSucceeded = true;
+
+    await new Promise((r) => setTimeout(r, 450));
+
     await stopScanner();
-    onscan(decodedText);
+
+    await onscan(decodedText);
   }
 
-  function onScanFailure() { }
+  function onScanFailure() {}
 
-  async function handleManualSubmit(e: Event) {
+  function handleManualSubmit(e: Event) {
     e.preventDefault();
-    onManualSave({ ...formData }); 
+
+    onManualSave({ ...formData });
   }
 
   onMount(() => {
@@ -97,6 +131,25 @@
     class="reader"
     class:hidden={mode === 'manual'}
   ></div>
+
+  {#if scanSucceeded}
+    <div class="success-overlay" aria-live="polite">
+      <div class="success-box">
+        <svg
+          class="success-check"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="4 12 10 18 20 6" />
+        </svg>
+      </div>
+    </div>
+  {/if}
 
   {#if mode === 'scan'}
     {#if !isStarted}
@@ -162,4 +215,47 @@
   .btn-primary { background: #6366f1; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; flex: 1; }
   .btn-secondary { background: #3f3f46; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; flex: 1; }
   .btn-floating { position: absolute; bottom: 10px; right: 10px; background: rgba(99, 102, 241, 0.8); color: white; border: none; padding: 8px; border-radius: 8px; font-size: 0.75rem; z-index: 15; cursor: pointer; }
+
+  /* ── Scan-success feedback ──────────────────────────────────────────────── */
+  .success-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(34, 197, 94, 0.18);
+    z-index: 25;
+    animation: success-flash 0.45s ease-out;
+  }
+
+  .success-box {
+    width: 250px;
+    height: 150px;
+    border: 3px solid #22c55e;
+    border-radius: 8px;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(34, 197, 94, 0.1);
+  }
+
+  .success-check {
+    width: 64px;
+    height: 64px;
+    color: #22c55e;
+    animation: success-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  @keyframes success-flash {
+    0%   { background: rgba(34, 197, 94, 0); }
+    30%  { background: rgba(34, 197, 94, 0.28); }
+    100% { background: rgba(34, 197, 94, 0.18); }
+  }
+
+  @keyframes success-pop {
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.15); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
 </style>

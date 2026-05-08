@@ -1,13 +1,19 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import OcrScanner from '$lib/components/OcrScanner.svelte'; // Make sure path points to your OCR component
 
   // 1. Recover URL parameters passed from the barcode scanner step
-  const shelf_id = $derived($page.url.searchParams.get('shelf_id') ?? '');
-  const slot     = $derived($page.url.searchParams.get('slot')     ?? '');
-  const barcode  = $derived($page.url.searchParams.get('barcode')  ?? '');
+  const shelf_id    = $derived(page.url.searchParams.get('shelf_id') ?? '');
+  const slot        = $derived(page.url.searchParams.get('slot')     ?? '');
+  const barcode     = $derived(page.url.searchParams.get('barcode')  ?? '');
+  /**
+   * Truthy when the parent flow flagged this OCR step as a slot
+   * replacement. Forwarded verbatim to the saveExpiry action so the
+   * server can swap the existing shelf_items row instead of inserting.
+   */
+  const replaceMode = $derived(page.url.searchParams.get('replace')  === '1');
 
   const urlParamsValid = $derived(
     shelf_id.length > 0 && slot.length > 0 && barcode.length > 0
@@ -51,7 +57,7 @@
     </div>
   {:else}
     <div class="page-header">
-      <h1>Scan Expiry Date</h1>
+      <h1>{replaceMode ? 'Scan New Expiry Date' : 'Scan Expiry Date'}</h1>
       <p class="context-label">
         Product: <code>{barcode}</code> | Slot: <code>{slot}</code>
       </p>
@@ -90,6 +96,7 @@
       formData.set("barcode", barcode);
       formData.set("shelf_id", shelf_id);
       formData.set("scale_index", slot);
+      formData.set("replace", replaceMode ? '1' : '0');
 
       return async ({ result }) => {
         isSaving = false;
@@ -115,6 +122,7 @@
     <input type="hidden" name="barcode" value={barcode} />
     <input type="hidden" name="shelf_id" value={shelf_id} />
     <input type="hidden" name="scale_index" value={slot} />
+    <input type="hidden" name="replace" value={replaceMode ? '1' : '0'} />
   </form>
 </div>
 
