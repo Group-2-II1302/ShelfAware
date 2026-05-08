@@ -40,7 +40,13 @@ type EmptySlot = {
 
 export type ShelfSlot = FilledSlot | EmptySlot;
 
-export const load: PageServerLoad = async ({ locals, params }) => {
+export const load: PageServerLoad = async ({ locals, params, depends }) => {
+  /*
+    Tag this load so realtime weight_logs events on the client can
+    refresh the shelf without nuking unrelated cached data.
+  */
+  depends("app:shelf-detail");
+
   const shelfId = params.shelf_id;
   const {
     data: { user },
@@ -181,9 +187,39 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     return { scale_index: i, zone, status: "empty" };
   });
 
+  /*
+    Most-recent weight reading across all items on this shelf. We use
+    this as a proxy for "did the Pi check in lately" — there's no
+    explicit heartbeat today. Returns null when the shelf has no
+    items, or when items exist but the Pi has never sent a reading.
+    Realtime subscription on the client refines this without us
+    having to poll the server.
+  */
+  const itemIds = (items ?? []).map((it) => it.id);
+  let lastSyncedAt: string | null = null;
+  if (itemIds.length > 0) {
+    const { data: lastLog, error: logErr } = await locals.supabase
+      .from("weight_logs")
+      .select("recorded_at")
+      .in("item_id", itemIds)
+      .order("recorded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (logErr) {
+      // Don't fail the whole page on a sync-status hiccup — just
+      // surface "Never connected" so the rest of the shelf still
+      // renders. Most likely cause is a missing SELECT RLS policy
+      // on weight_logs for shelf members.
+      console.warn("[shelf load] weight_logs query failed:", logErr.message);
+    }
+    lastSyncedAt = lastLog?.recorded_at ?? null;
+  }
+
   return {
     shelf,
     slots,
+    itemIds,
+    lastSyncedAt,
   };
 };
 

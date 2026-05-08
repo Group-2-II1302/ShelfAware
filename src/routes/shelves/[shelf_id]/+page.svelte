@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte'
   import { enhance } from '$app/forms'
+  import { invalidate } from '$app/navigation'
   import type { PageData } from './$types'
   import { ZONES } from '$lib/shelf'
   import {
@@ -8,8 +10,74 @@
     NOT_CALIBRATED_LABEL,
   } from '$lib/shelfState'
   import ProductDetailsModal from '$lib/components/ProductDetailsModal.svelte'
+  import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
 
   let { data }: { data: PageData } = $props()
+
+  /*
+    Live-updating sync timestamp. Server load gives us the initial
+    value (max recorded_at across this shelf's items); we refresh it
+    optimistically when a realtime weight_logs INSERT arrives for one
+    of our item ids, and also schedule a backend invalidation so any
+    other derived state (current_weight_g on shelf_items, fullness
+    state) gets recomputed.
+  */
+  let liveLastSyncedAt = $state<string | null>(data.lastSyncedAt)
+
+  $effect(() => {
+    /*
+      Pick up server-side updates after invalidation, but never
+      regress past a more-recent realtime value we already have.
+    */
+    if (data.lastSyncedAt && (!liveLastSyncedAt || data.lastSyncedAt > liveLastSyncedAt)) {
+      liveLastSyncedAt = data.lastSyncedAt
+    }
+  })
+
+  let invalidateTimer: ReturnType<typeof setTimeout> | undefined
+
+  function scheduleRefresh() {
+    if (invalidateTimer) return
+    invalidateTimer = setTimeout(() => {
+      invalidateTimer = undefined
+      invalidate('app:shelf-detail')
+    }, 4_000)
+  }
+
+  let channel: ReturnType<typeof data.supabase.channel> | undefined
+
+  onMount(() => {
+    if (data.itemIds.length === 0) return
+    channel = data.supabase
+      .channel(`shelf-${data.shelf.id}-weight-logs`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'weight_logs',
+          /*
+            Postgres-changes server-side filter only supports a single
+            equality, so we receive every weight_logs insert and filter
+            client-side against the items we care about. Cheap.
+          */
+        },
+        (payload) => {
+          const row = payload.new as { item_id?: string; recorded_at?: string }
+          if (!row?.item_id || !data.itemIds.includes(row.item_id)) return
+          if (row.recorded_at && (!liveLastSyncedAt || row.recorded_at > liveLastSyncedAt)) {
+            liveLastSyncedAt = row.recorded_at
+          }
+          scheduleRefresh()
+        },
+      )
+      .subscribe()
+  })
+
+  onDestroy(() => {
+    if (invalidateTimer) clearTimeout(invalidateTimer)
+    if (channel) channel.unsubscribe()
+  })
 
   /**
    * Tracks which slot (by scale_index) currently has an in-flight
@@ -81,6 +149,10 @@
     <h1 class="shelf-title">
       {data.shelf.name}
     </h1>
+    <SyncStatusBadge
+      lastSeen={liveLastSyncedAt}
+      hasItems={data.itemIds.length > 0}
+    />
   </header>
 
   {#each ZONES as zone (zone.id)}
@@ -231,6 +303,10 @@
 
   .shelf-header {
     margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
 
   .shelf-title {
