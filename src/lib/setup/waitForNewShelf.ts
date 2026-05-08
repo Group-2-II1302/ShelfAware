@@ -8,7 +8,7 @@ type Shelf = {
 
 export async function waitForNewShelf(
     signal: AbortSignal,
-    timeoutMs = 90000,
+    timeoutMs = 900000,
     pollIntervalMs = 3000
 ): Promise<string> {
 
