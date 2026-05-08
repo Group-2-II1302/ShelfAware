@@ -42,8 +42,34 @@ export const actions: Actions = {
     const brand = formData.get("brand")?.toString().trim() || null;
     const image_url = formData.get("image_url")?.toString().trim() || null;
     const full_weight_g_raw = formData.get("full_weight_g")?.toString();
+    const nutrition_facts_raw = formData.get("nutrition_facts")?.toString();
     const shelf_id = formData.get("shelf_id")?.toString().trim();
     const scale_index_raw = formData.get("scale_index")?.toString();
+    /*
+      '1' when the user entered the flow by tapping a filled slot. We
+      forward this to the OCR step via the redirect URL so the final
+      shelf_items write swaps the existing row instead of inserting a
+      duplicate. Anything other than '1' is treated as a normal new add.
+    */
+    const replace = formData.get("replace")?.toString() === "1" ? "1" : "0";
+
+    /*
+      nutrition_facts is sent as a JSON string when found via OpenFoodFacts
+      and empty/missing for manual entries. Parse defensively — bad JSON
+      should never break the save flow; we just log and persist null.
+    */
+    let nutrition_facts: unknown = null;
+    if (nutrition_facts_raw && nutrition_facts_raw.length > 0) {
+      try {
+        nutrition_facts = JSON.parse(nutrition_facts_raw);
+      } catch (err) {
+        console.warn(
+          "Could not parse nutrition_facts JSON, persisting null:",
+          err,
+        );
+        nutrition_facts = null;
+      }
+    }
 
     // 2. The "Shelves Contract" Guard Clauses
     if (!barcode || !product_name) {
@@ -65,17 +91,29 @@ export const actions: Actions = {
     }
 
     // 3. STEP 1: Upsert to product_catalog (Global Metadata)
-    const { error: catError } = await supabase.from("product_catalog").upsert(
-      {
-        barcode,
-        product_name,
-        brand,
-        image_url,
-        full_weight_g,
-        unit: "g",
-      },
-      { onConflict: "barcode" },
-    );
+    /*
+      Only include nutrition_facts in the upsert when we actually have it,
+      so a manual re-scan doesn't wipe out enriched data from a previous
+      OpenFoodFacts hit. Same idea for full_weight_g being 0 — preserve
+      the old value if we don't have a new one.
+    */
+    const catalogPayload: Record<string, unknown> = {
+      barcode,
+      product_name,
+      brand,
+      image_url,
+      unit: "g",
+    };
+    if (full_weight_g > 0) {
+      catalogPayload.full_weight_g = full_weight_g;
+    }
+    if (nutrition_facts !== null) {
+      catalogPayload.nutrition_facts = nutrition_facts;
+    }
+
+    const { error: catError } = await supabase
+      .from("product_catalog")
+      .upsert(catalogPayload, { onConflict: "barcode" });
 
     if (catError) {
       console.error(
@@ -89,7 +127,7 @@ export const actions: Actions = {
     // The OCR step will do one final insert with both barcode and expiry date.
     throw redirect(
       303,
-      `/scan/ocr?shelf_id=${encodeURIComponent(shelf_id)}&slot=${encodeURIComponent(scale_index)}&barcode=${encodeURIComponent(barcode)}`,
+      `/scan/ocr?shelf_id=${encodeURIComponent(shelf_id)}&slot=${encodeURIComponent(scale_index)}&barcode=${encodeURIComponent(barcode)}&replace=${replace}`,
     );
   },
 };
