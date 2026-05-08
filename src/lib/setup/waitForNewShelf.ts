@@ -7,6 +7,7 @@ type Shelf = {
 };
 
 export async function waitForNewShelf(
+    signal: AbortSignal,
     timeoutMs = 90000,
     pollIntervalMs = 3000
 ): Promise<string> {
@@ -29,30 +30,39 @@ export async function waitForNewShelf(
 
     while (Date.now() < deadline) {
 
+        if (signal.aborted) {
+            throw new Error("Polling aborted");
+        }
+
         try {
+
             const res = await fetch("/api/shelves", {
-                headers
+                headers,
+                signal
             });
 
-            if (!res.ok) {
-                await sleep(pollIntervalMs);
-                continue;
+            if (res.ok) {
+
+                const data: { shelves: Shelf[] } = await res.json();
+
+                const fresh = data.shelves.find((s) => {
+                    return (
+                        new Date(s.created_at).getTime() >= setupStartedAt
+                    );
+                });
+
+                if (fresh) {
+                    return fresh.shelf_id;
+                }
             }
 
-            const data: { shelves: Shelf[] } = await res.json();
+        } catch (e: any) {
 
-            const fresh = data.shelves.find((s) => {
-                return (
-                    new Date(s.created_at).getTime() >= setupStartedAt
-                );
-            });
-
-            if (fresh) {
-                return fresh.shelf_id;
+            if (e.name === "AbortError") {
+                throw e;
             }
 
-        } catch {
-            // Ignore connectivity failures
+            // Ignore transient connectivity issues
         }
 
         await sleep(pollIntervalMs);

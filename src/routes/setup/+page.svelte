@@ -5,18 +5,24 @@
     import ErrorBanner from "../../lib/components/ErrorBanner.svelte";
     import { waitForNewShelf } from "$lib/setup/waitForNewShelf";
     import { goto } from "$app/navigation";
+    import { onDestroy } from "svelte";
+
+    let controller: AbortController | null = null;
 
     async function startSetup() {
+
+        controller?.abort();
+
+        controller = new AbortController();
+
         setupState.set({
             step: "waiting",
             shelfId: undefined,
             error: undefined
         });
 
-        const setupStartedAt = Date.now();
-
         try {
-            const shelfId = await waitForNewShelf(setupStartedAt);
+            const shelfId = await waitForNewShelf(controller.signal);
 
             setupState.set({
                 step: "success",
@@ -25,6 +31,11 @@
             });
 
         } catch (e: any) {
+
+            if (e.name === "AbortError") {
+                return;
+            }
+
             setupState.set({
                 step: "error",
                 shelfId: undefined,
@@ -42,6 +53,9 @@
         goto(`/shelves/${$setupState.shelfId}`);
     }
 
+    onDestroy(() => {
+        controller?.abort();
+    });
 </script>
 
 {#if $setupState.step === "idle"}
