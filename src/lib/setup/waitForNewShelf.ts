@@ -8,7 +8,7 @@ type Shelf = {
 };
 
 /*
-  Provisioning poller.
+  Provisioning poller. 
 
   Snapshot-diff against the user's current shelves (per the contract):
   read the set of shelf_ids before the user goes to the captive portal,
