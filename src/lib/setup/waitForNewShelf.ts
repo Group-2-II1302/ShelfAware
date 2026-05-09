@@ -37,9 +37,24 @@ export async function waitForNewShelf(
         }
 
         try {
+
+            console.log("[setup] Polling worker..");
+
             const res = await fetch(`${WORKER_URL}/shelves`, {
                 headers
             });
+
+            console.log("[setup] Worker response status: ", res.status);
+
+            let data: { shelves: Shelf[] } | null = null;
+
+            try {
+                data = await res.json();
+
+                console.log("[setup] worker response body: ", data);
+            } catch (jsonError) {
+                console.warn("[setup] Failed to parse worker JSON:", jsonError);
+            }
 
             if (res.status === 401) {
                 // auth not ready yet → retry instead of failing
@@ -47,8 +62,7 @@ export async function waitForNewShelf(
                 continue;
             }
 
-            if (res.ok) {
-                const data: { shelves: Shelf[] } = await res.json();
+            if (res.ok && data) {
 
                 const fresh = data.shelves.find((s) => {
                     return (
@@ -56,7 +70,11 @@ export async function waitForNewShelf(
                     );
                 });
 
+                console.log("[setup] detected fresh shelf:", fresh);
+
                 if (fresh) {
+                    console.log("[setup] Detected fresh shelf:", fresh);
+
                     return fresh.shelf_id;
                 }
             }
@@ -64,10 +82,11 @@ export async function waitForNewShelf(
         } catch (e: any) {
 
             if (e.name === "AbortError") {
+                console.log("[setup] polling aborted");
                 throw e;
             }
 
-            // Ignore transient network failures (WiFi switching, captive portal, etc.)
+            console.warn("[setup] polling failed:", e);
         }
 
         await sleep(pollIntervalMs);
