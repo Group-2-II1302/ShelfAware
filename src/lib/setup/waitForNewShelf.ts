@@ -1,6 +1,5 @@
 import { supabase } from "../supabaseClient";
-
-const WORKER_URL = "https://shelfaware-backend.emanuel-diktonius.workers.dev";
+import { BACKEND_URL } from "../config";
 
 type Shelf = {
   shelf_id: string;
@@ -8,84 +7,108 @@ type Shelf = {
   created_at: string;
 };
 
+/*
+  Provisioning poller.
+
+  Snapshot-diff against the user's current shelves (per the contract):
+  read the set of shelf_ids before the user goes to the captive portal,
+  then poll until a shelf_id appears that wasn't in the baseline. This
+  is robust against client clock skew, daylight-saving rollovers, and
+  unrelated invites arriving mid-flow — none of which a created_at
+  timestamp filter would survive.
+*/
 export async function waitForNewShelf(
   signal: AbortSignal,
-  timeoutMs = 900000,
-  pollIntervalMs = 3000,
+  timeoutMs = 360_000, // 6 minutes
+  pollIntervalMs = 3_000,
 ): Promise<string> {
-  const { data } = await supabase.auth.getSession();
+  const baseline = await fetchShelfIds();
 
-  const jwt = data.session?.access_token;
-
-  if (!jwt) {
-    throw new Error("NOT_AUTHENTICATED");
-  }
-
-  const headers = {
-    Authorization: `Bearer ${jwt}`,
-  };
-
-  const setupStartedAt = Date.now();
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     if (signal.aborted) {
-      throw new Error("Polling aborted");
+      throw new DOMException("Polling aborted", "AbortError");
     }
 
     try {
-      console.log("[setup] Polling worker..");
-
-      const res = await fetch(`${WORKER_URL}/shelves`, {
-        headers,
-      });
-
-      console.log("[setup] Worker response status: ", res.status);
-
-      let data: { shelves: Shelf[] } | null = null;
-
-      try {
-        data = await res.json();
-
-        console.log("[setup] worker response body: ", data);
-      } catch (jsonError) {
-        console.warn("[setup] Failed to parse worker JSON:", jsonError);
-      }
-
-      if (res.status === 401) {
-        // auth not ready yet → retry instead of failing
-        await sleep(pollIntervalMs);
-        continue;
-      }
-
-      if (res.ok && data) {
-        const fresh = data.shelves.find((s) => {
-          return new Date(s.created_at).getTime() >= setupStartedAt;
-        });
-
+      const ids = await fetchShelfIds();
+      const fresh = [...ids].find((id) => !baseline.has(id));
+      if (fresh) {
         console.log("[setup] detected fresh shelf:", fresh);
-
-        if (fresh) {
-          console.log("[setup] Detected fresh shelf:", fresh);
-
-          return fresh.shelf_id;
-        }
+        return fresh;
       }
     } catch (e: any) {
-      if (e.name === "AbortError") {
-        console.log("[setup] polling aborted");
-        throw e;
-      }
-
-      console.warn("[setup] polling failed:", e);
+      if (e?.name === "AbortError") throw e;
+      /*
+        Network / auth-not-ready / transient 401 etc. — keep polling.
+        The user is mid WiFi-flop during captive-portal handoff so
+        these are expected. Logged for diagnostics only.
+      */
+      console.warn("[setup] poll iteration failed:", e?.message ?? e);
     }
 
-    await sleep(pollIntervalMs);
+    await sleep(pollIntervalMs, signal);
   }
 
   throw new Error("Provisioning timed out");
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/*
+  Single poll request. Re-reads the session each call so a token
+  refresh during a long poll picks up automatically. Returns the
+  current set of shelf_ids on success, throws on transient failure.
+*/
+async function fetchShelfIds(): Promise<Set<string>> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const jwt = sessionData.session?.access_token;
+  if (!jwt) throw new Error("AUTH_NOT_READY");
+
+  const res = await fetch(`${BACKEND_URL}/shelves`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  });
+
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) {
+    let bodySnippet = "";
+    try {
+      bodySnippet = (await res.text()).slice(0, 200);
+    } catch {
+      // ignore
+    }
+    throw new Error(`SHELVES_FETCH_FAILED status=${res.status} ${bodySnippet}`);
+  }
+
+  let body: { shelves?: Shelf[] };
+  try {
+    body = await res.json();
+  } catch (jsonErr: any) {
+    throw new Error(
+      `SHELVES_PARSE_FAILED status=${res.status} ${jsonErr?.message ?? jsonErr}`,
+    );
+  }
+
+  return new Set((body.shelves ?? []).map((s) => s.shelf_id));
+}
+
+/*
+  Promise-based sleep that respects the abort signal so a manual
+  cancel doesn't wait the full poll interval before throwing.
+*/
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Polling aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Polling aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
