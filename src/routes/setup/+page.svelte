@@ -5,9 +5,19 @@
     import ErrorBanner from "../../lib/components/ErrorBanner.svelte";
     import { waitForNewShelf } from "$lib/setup/waitForNewShelf";
     import { goto } from "$app/navigation";
-    import { onDestroy } from "svelte";
+    import { onMount, onDestroy } from "svelte";
 
     let controller: AbortController | null = null;
+
+    /*
+      The setup store lives at module scope, so navigating away
+      mid-poll and coming back would otherwise leave the page stuck
+      in "waiting" with no live poller behind it. Reset on mount
+      so we always start from a clean idle state.
+    */
+    onMount(() => {
+        setupState.set({ step: "idle", shelfId: undefined, error: undefined });
+    });
 
     async function startSetup() {
 

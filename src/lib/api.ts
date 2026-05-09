@@ -1,12 +1,13 @@
 import { supabase } from "./supabaseClient";
+import { BACKEND_URL } from "./config";
 
-const WORKER_URL = "https://shelfaware-backend.emanuel-diktonius.workers.dev";
-
-let cachedToken: string | null = null;
-
+/*
+  Always re-read the session before a request. supabase-js holds the
+  freshest token (it transparently refreshes on the side), so calling
+  getSession() per request is essentially free and avoids the stale
+  cached-token failure mode.
+*/
 async function getToken(): Promise<string> {
-  if (cachedToken) return cachedToken;
-
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token ?? null;
 
@@ -14,7 +15,6 @@ async function getToken(): Promise<string> {
     throw new Error("AUTH_NOT_READY");
   }
 
-  cachedToken = token;
   return token;
 }
 
@@ -53,7 +53,7 @@ export type ShelfDetail = {
 // -----------------------------
 
 export async function getShelves(): Promise<ShelfSummary[]> {
-  const res = await authFetch(`${WORKER_URL}/shelves`);
+  const res = await authFetch(`${BACKEND_URL}/shelves`);
 
   if (res.status === 401) {
     throw new Error("UNAUTHORIZED");
@@ -69,7 +69,7 @@ export async function getShelves(): Promise<ShelfSummary[]> {
 }
 
 export async function getShelf(shelfId: string): Promise<ShelfDetail> {
-  const res = await authFetch(`${WORKER_URL}/shelves/${shelfId}`);
+  const res = await authFetch(`${BACKEND_URL}/shelves/${shelfId}`);
 
   if (res.status === 404) {
     throw new Error("SHELF_NOT_FOUND");
