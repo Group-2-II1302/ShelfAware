@@ -1,88 +1,118 @@
-import { supabase } from "$lib/supabaseClient";
+import { fail, type Actions } from "@sveltejs/kit";
+import type { PageServerLoad } from "./$types";
 
-export async function load() {
-  const now = new Date();
-  const todayISO = now.toISOString().split("T")[0];
-  const startOfToday = new Date(todayISO).getTime();
-
-  const [itemsRes, sentTodayRes] = await Promise.all([
-    supabase
-      .from("shelf_items")
-      .select(
-        "id, expiry_date, barcode, current_weight_g, low_stock_threshold_g",
-      ),
-    supabase
-      .from("alerts")
-      .select("item_id, alert_type")
-      .gte("last_triggered_at", todayISO),
-  ]);
-
-  const sentToday = new Set(
-    (sentTodayRes.data ?? []).map(function (s) {
-      return s.item_id + "-" + s.alert_type;
-    }),
-  );
-
-  const toInsert: {
-    item_id: string;
-    alert_type: string;
-    last_triggered_at: string;
-  }[] = [];
-  (itemsRes.data ?? []).forEach(function (item) {
-    if (item.expiry_date) {
-      const diff = Math.ceil(
-        (new Date(item.expiry_date).getTime() - startOfToday) / 86400000,
-      );
-      if (diff <= 2 && !sentToday.has(item.id + "-EXPIRY")) {
-        toInsert.push({
-          item_id: item.id,
-          alert_type: "EXPIRY",
-          last_triggered_at: now.toISOString(),
-        });
+type AlertRow = {
+  id: string;
+  alert_type: string;
+  last_triggered_at: string | null;
+  read_at: string | null;
+  shelf_items:
+    | {
+        barcode: string | null;
+        expiry_date: string | null;
+        product_catalog:
+          | { product_name: string | null }
+          | { product_name: string | null }[]
+          | null;
       }
-    }
+    | {
+        barcode: string | null;
+        expiry_date: string | null;
+        product_catalog:
+          | { product_name: string | null }
+          | { product_name: string | null }[]
+          | null;
+      }[]
+    | null;
+};
 
-    if (
-      item.current_weight_g <= item.low_stock_threshold_g &&
-      !sentToday.has(item.id + "-LOWSTOCK")
-    ) {
-      toInsert.push({
-        item_id: item.id,
-        alert_type: "LOWSTOCK",
-        last_triggered_at: now.toISOString(),
-      });
-    }
-  });
+export const load: PageServerLoad = async ({ locals, depends }) => {
+  depends("app:alerts");
 
-  if (toInsert.length > 0) await supabase.from("alerts").insert(toInsert);
+  const startOfToday = new Date(
+    new Date().toISOString().split("T")[0],
+  ).getTime();
 
-  const { data: alerts } = await supabase
+  const { data, error } = await locals.supabase
     .from("alerts")
     .select(
-      "*, shelf_items(barcode, expiry_date, product_catalog(product_name))",
+      "id, alert_type, last_triggered_at, read_at, shelf_items(barcode, expiry_date, product_catalog(product_name))",
     )
+    .is("resolved_at", null)
     .order("last_triggered_at", { ascending: false });
 
+  if (error) {
+    console.error("[inbox] failed to load alerts", error);
+  }
+
+  const rows = (data ?? []) as unknown as AlertRow[];
+
   return {
-    notifications: (alerts ?? []).map(function (n: any) {
-      return {
-        id: n.id,
-        message: formatMessage(n, startOfToday),
-        timestamp: formatRelative(n.last_triggered_at),
-      };
-    }),
+    notifications: rows.map((n) => ({
+      id: n.id,
+      alertType: n.alert_type,
+      lastTriggeredAt: n.last_triggered_at,
+      readAt: n.read_at,
+      message: formatMessage(n, startOfToday),
+    })),
   };
+};
+
+export const actions: Actions = {
+  markRead: async ({ request, locals }) => {
+    const form = await request.formData();
+    const id = form.get("id");
+    if (typeof id !== "string" || !id) {
+      return fail(400, { message: "Missing alert id" });
+    }
+
+    const { error } = await locals.supabase
+      .from("alerts")
+      .update({ read_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("read_at", null);
+
+    if (error) {
+      console.error("[inbox] failed to mark alert read", error);
+      return fail(500, { message: "Could not mark notification as read" });
+    }
+
+    return { success: true };
+  },
+
+  markAllRead: async ({ locals }) => {
+    const { error } = await locals.supabase
+      .from("alerts")
+      .update({ read_at: new Date().toISOString() })
+      .is("read_at", null)
+      .is("resolved_at", null);
+
+    if (error) {
+      console.error("[inbox] failed to mark all alerts read", error);
+      return fail(500, { message: "Could not mark notifications as read" });
+    }
+
+    return { success: true };
+  },
+};
+
+function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-function formatMessage(n: any, startOfToday: number) {
-  const shelf = n.shelf_items;
+function formatMessage(n: AlertRow, startOfToday: number) {
+  const shelf = firstOrNull(n.shelf_items);
   if (!shelf) return n.alert_type;
 
-  const name = shelf.product_catalog?.product_name || shelf.barcode;
+  const product = firstOrNull(shelf.product_catalog);
+  const name = product?.product_name || shelf.barcode || "Item";
 
   if (n.alert_type === "LOWSTOCK") {
     return name + " is running low";
   }
+
+  if (!shelf.expiry_date) return name;
 
   const diff = Math.ceil(
     (new Date(shelf.expiry_date).getTime() - startOfToday) / 86400000,
@@ -94,15 +124,4 @@ function formatMessage(n: any, startOfToday: number) {
         ? "expires today"
         : "expires in " + diff + " day(s)";
   return name + " " + status;
-}
-
-function formatRelative(dateStr: string) {
-  if (!dateStr) return "Unknown date";
-  const delta = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (delta < 60) return "just now";
-  const mins = Math.floor(delta / 60);
-  if (mins < 60) return mins + " minutes ago";
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return hours + " hours ago";
-  return new Date(dateStr).toLocaleDateString();
 }
