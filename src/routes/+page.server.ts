@@ -11,6 +11,12 @@ import {
 
 const EXPIRY_WINDOW_DAYS = 7;
 const ACTION_LIST_LIMIT = 5;
+/*
+  Upper bound on what we send for the "show all" expansion. Keeps the
+  payload reasonable on accounts with dozens of expiring items while
+  still covering any realistic household.
+*/
+const ACTION_LIST_MAX = 50;
 
 type ActionItem = {
   id: string;
@@ -397,8 +403,14 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
     itemShelfMap,
     firstName,
     actions: {
-      expiring: expiring.slice(0, ACTION_LIST_LIMIT),
-      lowStock: lowStock.slice(0, ACTION_LIST_LIMIT),
+      /*
+        `expiring` / `lowStock` carry everything up to ACTION_LIST_MAX
+        so the client can reveal the rest without an extra round-trip.
+        `limit` is the count shown collapsed; the UI uses it to decide
+        whether to render a "Show all" toggle.
+      */
+      expiring: expiring.slice(0, ACTION_LIST_MAX),
+      lowStock: lowStock.slice(0, ACTION_LIST_MAX),
       expiringTotal,
       lowStockTotal,
       limit: ACTION_LIST_LIMIT,

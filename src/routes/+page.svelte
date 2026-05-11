@@ -47,6 +47,15 @@
 
   let activeTab = $state<Tab>(resolveInitialTab())
 
+  /*
+    Per-card expansion state for the "Now" lists. Collapsed by default,
+    flipped to true when the user taps "Show all N". Server now sends
+    the full list (capped at ACTION_LIST_MAX) so we can reveal in
+    place without an extra fetch.
+  */
+  let expandedExpiring = $state(false)
+  let expandedLowStock = $state(false)
+
   onMount(() => {
     /*
       Apply localStorage fallback after hydration. Only kicks in when
@@ -354,7 +363,7 @@
             </p>
 
             <ul class="stat-card__list">
-              {#each data.actions.expiring as item (item.id)}
+              {#each (expandedExpiring ? data.actions.expiring : data.actions.expiring.slice(0, data.actions.limit)) as item (item.id)}
                 <li>
                   <a
                     class="stat-row"
@@ -372,9 +381,18 @@
                   </a>
                 </li>
               {/each}
-              {#if data.actions.expiringTotal > data.actions.limit}
-                <li class="stat-card__more">
-                  + {data.actions.expiringTotal - data.actions.limit} more
+              {#if data.actions.expiring.length > data.actions.limit}
+                <li>
+                  <button
+                    type="button"
+                    class="stat-card__toggle"
+                    aria-expanded={expandedExpiring}
+                    onclick={() => (expandedExpiring = !expandedExpiring)}
+                  >
+                    {expandedExpiring
+                      ? 'Show less'
+                      : `Show all ${data.actions.expiring.length}`}
+                  </button>
                 </li>
               {/if}
             </ul>
@@ -399,7 +417,7 @@
             </p>
 
             <ul class="stat-card__list">
-              {#each data.actions.lowStock as item (item.id)}
+              {#each (expandedLowStock ? data.actions.lowStock : data.actions.lowStock.slice(0, data.actions.limit)) as item (item.id)}
                 <li>
                   <a
                     class="stat-row"
@@ -416,9 +434,18 @@
                   </a>
                 </li>
               {/each}
-              {#if data.actions.lowStockTotal > data.actions.limit}
-                <li class="stat-card__more">
-                  + {data.actions.lowStockTotal - data.actions.limit} more
+              {#if data.actions.lowStock.length > data.actions.limit}
+                <li>
+                  <button
+                    type="button"
+                    class="stat-card__toggle"
+                    aria-expanded={expandedLowStock}
+                    onclick={() => (expandedLowStock = !expandedLowStock)}
+                  >
+                    {expandedLowStock
+                      ? 'Show less'
+                      : `Show all ${data.actions.lowStock.length}`}
+                  </button>
                 </li>
               {/if}
             </ul>
@@ -1232,13 +1259,21 @@
 
   .stat-grid {
     display: grid;
-    grid-template-columns: 1fr;
+    /*
+      `minmax(0, 1fr)` (not `1fr`) so a card with a long product
+      name can't blow out its column past the dashboard's max-width.
+      Plain `1fr` is `minmax(min-content, 1fr)`, which means the
+      column grows to fit the widest unbreakable child — in our case
+      a long item name on the low-stock card was pushing the right
+      column past the page gutter on wide screens.
+    */
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;
   }
 
   @media (min-width: 480px) {
     .stat-grid {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     }
   }
 
@@ -1360,10 +1395,28 @@
     color: var(--warn);
   }
 
-  .stat-card__more {
-    font-size: 0.7rem;
-    opacity: 0.55;
-    padding-top: 0.25rem;
+  .stat-card__toggle {
+    margin-top: 0.25rem;
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    background: transparent;
+    border: none;
+    border-top: 1px dashed var(--border);
+    color: inherit;
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    opacity: 0.7;
+    cursor: pointer;
+    border-radius: 0;
+    text-align: left;
+    transition: opacity 0.15s ease, color 0.15s ease;
+  }
+
+  .stat-card__toggle:hover,
+  .stat-card__toggle:focus-visible {
+    opacity: 1;
+    color: var(--matcha-deep);
   }
 
   .shelves {
