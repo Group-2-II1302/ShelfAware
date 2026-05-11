@@ -300,11 +300,18 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
 
   /*
     ─── Insights pipeline ─────────────────────────────────────────────
-    Fan out all five insight queries (current + previous window logs,
-    alerts, expiries) in parallel, then hand them to the shared
-    `computeInsights` helper. The helper is also called by the per-
-    shelf detail page so the two views can't drift.
+    Streamed: we return the insights as a *Promise* so SvelteKit can
+    flush the synchronous critical-path data (header, "Now" lists,
+    shelves grid) immediately and let the page render with a skeleton
+    over the Insights tab while the five fan-out queries finish. The
+    page <svelte:boundary>s the await so reload-feel is dominated by
+    the fast queries above, not by the heaviest read on the route.
+
+    Note: we snapshot `itemMeta` values into an array up-front so the
+    async closure doesn't iterate a Map that might be GC'd or mutated.
   */
+  const insightItemIds = Array.from(itemMeta.keys());
+  const itemMetaSnapshot = Array.from(itemMeta.values());
   const windowMs = insightWindowDays * 86_400_000;
   const nowMs = Date.now();
   const windowStart = new Date(nowMs - windowMs);
@@ -312,68 +319,88 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
   const prevWindowEnd = windowStart;
 
   type Result<T> = { data: T[] | null; error: { message: string } | null };
-  let currentLogsRes: Result<LogRow> = { data: [], error: null };
-  let currentAlertsRes: Result<AlertRow> = { data: [], error: null };
-  let prevLogsRes: Result<LogRow> = { data: [], error: null };
-  let prevAlertsRes: Result<AlertRow> = { data: [], error: null };
-  let prevExpiriesRes: Result<ExpiryRow> = { data: [], error: null };
 
-  if (itemMeta.size > 0) {
-    const insightItemIds = Array.from(itemMeta.keys());
-    [currentLogsRes, currentAlertsRes, prevLogsRes, prevAlertsRes, prevExpiriesRes] =
-      await Promise.all([
+  const insightsPromise = (async () => {
+    let currentLogsRes: Result<LogRow> = { data: [], error: null };
+    let currentAlertsRes: Result<AlertRow> = { data: [], error: null };
+    let prevLogsRes: Result<LogRow> = { data: [], error: null };
+    let prevAlertsRes: Result<AlertRow> = { data: [], error: null };
+    let prevExpiriesRes: Result<ExpiryRow> = { data: [], error: null };
+
+    if (insightItemIds.length > 0) {
+      [
+        currentLogsRes,
+        currentAlertsRes,
+        prevLogsRes,
+        prevAlertsRes,
+        prevExpiriesRes,
+      ] = await Promise.all([
         locals.supabase
           .from("weight_logs")
           .select("item_id, weight_g, recorded_at")
           .in("item_id", insightItemIds)
           .gte("recorded_at", windowStart.toISOString())
-          .order("recorded_at", { ascending: true }) as unknown as Promise<Result<LogRow>>,
+          .order("recorded_at", {
+            ascending: true,
+          }) as unknown as Promise<Result<LogRow>>,
         locals.supabase
           .from("alerts")
           .select("item_id, alert_type, last_triggered_at")
           .in("item_id", insightItemIds)
           .eq("alert_type", "low_stock")
-          .gte("last_triggered_at", windowStart.toISOString()) as unknown as Promise<Result<AlertRow>>,
+          .gte(
+            "last_triggered_at",
+            windowStart.toISOString(),
+          ) as unknown as Promise<Result<AlertRow>>,
         locals.supabase
           .from("weight_logs")
           .select("item_id, weight_g, recorded_at")
           .in("item_id", insightItemIds)
           .gte("recorded_at", prevWindowStart.toISOString())
           .lt("recorded_at", prevWindowEnd.toISOString())
-          .order("recorded_at", { ascending: true }) as unknown as Promise<Result<LogRow>>,
+          .order("recorded_at", {
+            ascending: true,
+          }) as unknown as Promise<Result<LogRow>>,
         locals.supabase
           .from("alerts")
           .select("item_id, last_triggered_at")
           .in("item_id", insightItemIds)
           .eq("alert_type", "low_stock")
           .gte("last_triggered_at", prevWindowStart.toISOString())
-          .lt("last_triggered_at", prevWindowEnd.toISOString()) as unknown as Promise<Result<AlertRow>>,
+          .lt(
+            "last_triggered_at",
+            prevWindowEnd.toISOString(),
+          ) as unknown as Promise<Result<AlertRow>>,
         locals.supabase
           .from("shelf_items")
           .select("id, expiry_date, current_weight_g")
           .in("id", insightItemIds)
           .gte("expiry_date", prevWindowStart.toISOString().slice(0, 10))
-          .lt("expiry_date", prevWindowEnd.toISOString().slice(0, 10)) as unknown as Promise<Result<ExpiryRow>>,
+          .lt(
+            "expiry_date",
+            prevWindowEnd.toISOString().slice(0, 10),
+          ) as unknown as Promise<Result<ExpiryRow>>,
       ]);
 
-    if (currentLogsRes.error) {
-      console.warn(
-        "[insights] weight_logs query failed:",
-        currentLogsRes.error.message,
-      );
+      if (currentLogsRes.error) {
+        console.warn(
+          "[insights] weight_logs query failed:",
+          currentLogsRes.error.message,
+        );
+      }
     }
-  }
 
-  const insights = computeInsights(
-    itemMeta.values(),
-    currentLogsRes.data ?? [],
-    currentAlertsRes.data ?? [],
-    prevLogsRes.data ?? [],
-    prevAlertsRes.data ?? [],
-    prevExpiriesRes.data ?? [],
-    insightWindowDays,
-    insightRangeKey,
-  );
+    return computeInsights(
+      itemMetaSnapshot,
+      currentLogsRes.data ?? [],
+      currentAlertsRes.data ?? [],
+      prevLogsRes.data ?? [],
+      prevAlertsRes.data ?? [],
+      prevExpiriesRes.data ?? [],
+      insightWindowDays,
+      insightRangeKey,
+    );
+  })();
 
   const shelvesEnriched = shelvesWithSync.map((s) => {
     const rollup = shelfRollup[s.id];
@@ -432,6 +459,11 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
         ).length,
       },
     },
-    insights,
+    /*
+      Streamed: the page renders synchronously around this promise and
+      <svelte:boundary>s the resolution on the client. Resolved value
+      shape is identical to before — pure computational change.
+    */
+    insights: insightsPromise,
   };
 };

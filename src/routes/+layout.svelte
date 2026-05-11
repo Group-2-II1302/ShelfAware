@@ -6,6 +6,7 @@
 
   import Menu from '$lib/components/Menu.svelte'
   import AlertsListener from '$lib/components/AlertsListener.svelte'
+  import NavigationProgress from '$lib/components/NavigationProgress.svelte'
 
   let { data, children } = $props()
   let { supabase, claims, unreadAlertCount } = $derived(data)
@@ -23,6 +24,8 @@
 <svelte:head>
   <link rel="icon" href={favicon} />
 </svelte:head>
+
+<NavigationProgress />
 
 {@render children()}
 

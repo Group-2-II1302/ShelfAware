@@ -257,33 +257,63 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
 
   type Result<T> = { data: T[] | null; error: { message: string } | null };
 
+  /*
+    `lastSyncedAt` powers the sync-status badge in the always-visible
+    header, so we await it on the critical path. Everything else
+    (the five heavy insights queries + utilization sample) streams
+    via the Promise we return below.
+  */
   let lastLogRes: { data: { recorded_at: string } | null; error: { message: string } | null } = {
     data: null,
     error: null,
   };
-  let utilLogsRes: Result<{ item_id: string; recorded_at: string; weight_g: number }> = {
-    data: [],
-    error: null,
-  };
-  let currentLogsRes: Result<LogRow> = { data: [], error: null };
-  let currentAlertsRes: Result<AlertRow> = { data: [], error: null };
-  let prevLogsRes: Result<LogRow> = { data: [], error: null };
-  let prevAlertsRes: Result<AlertRow> = { data: [], error: null };
-  let prevExpiriesRes: Result<ExpiryRow> = { data: [], error: null };
-
   if (itemIds.length > 0) {
-    [lastLogRes, currentLogsRes, currentAlertsRes, prevLogsRes, prevAlertsRes, prevExpiriesRes, utilLogsRes] =
-      await Promise.all([
-        locals.supabase
-          .from("weight_logs")
-          .select("recorded_at")
-          .in("item_id", itemIds)
-          .order("recorded_at", { ascending: false })
-          .limit(1)
-          .maybeSingle() as unknown as Promise<{
-          data: { recorded_at: string } | null;
-          error: { message: string } | null;
-        }>,
+    lastLogRes = (await locals.supabase
+      .from("weight_logs")
+      .select("recorded_at")
+      .in("item_id", itemIds)
+      .order("recorded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()) as unknown as typeof lastLogRes;
+  }
+  const lastSyncedAt: string | null = lastLogRes.data?.recorded_at ?? null;
+  if (lastLogRes.error) {
+    // Don't fail the whole page on a sync-status hiccup — just
+    // surface "Never connected" so the rest of the shelf still
+    // renders. Most likely cause is a missing SELECT RLS policy
+    // on weight_logs for shelf members.
+    console.warn("[shelf load] weight_logs query failed:", lastLogRes.error.message);
+  }
+
+  /*
+    Snapshot mutable state used inside the async closure so the page
+    renders without waiting on Supabase here.
+  */
+  const itemMetaSnapshot = Array.from(itemMeta.values());
+  const itemIdToSlot = new Map<string, number>();
+  for (const meta of itemMetaSnapshot) itemIdToSlot.set(meta.id, meta.scaleIndex);
+  const currentItemMetaSize = itemMeta.size;
+
+  const insightsPromise = (async () => {
+    let utilLogsRes: Result<{ item_id: string; recorded_at: string; weight_g: number }> = {
+      data: [],
+      error: null,
+    };
+    let currentLogsRes: Result<LogRow> = { data: [], error: null };
+    let currentAlertsRes: Result<AlertRow> = { data: [], error: null };
+    let prevLogsRes: Result<LogRow> = { data: [], error: null };
+    let prevAlertsRes: Result<AlertRow> = { data: [], error: null };
+    let prevExpiriesRes: Result<ExpiryRow> = { data: [], error: null };
+
+    if (itemIds.length > 0) {
+      [
+        currentLogsRes,
+        currentAlertsRes,
+        prevLogsRes,
+        prevAlertsRes,
+        prevExpiriesRes,
+        utilLogsRes,
+      ] = await Promise.all([
         locals.supabase
           .from("weight_logs")
           .select("item_id, weight_g, recorded_at")
@@ -331,75 +361,67 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
           Result<{ item_id: string; recorded_at: string; weight_g: number }>
         >,
       ]);
-  }
+    }
 
-  const lastSyncedAt: string | null = lastLogRes.data?.recorded_at ?? null;
-  if (lastLogRes.error) {
-    // Don't fail the whole page on a sync-status hiccup — just
-    // surface "Never connected" so the rest of the shelf still
-    // renders. Most likely cause is a missing SELECT RLS policy
-    // on weight_logs for shelf members.
-    console.warn("[shelf load] weight_logs query failed:", lastLogRes.error.message);
-  }
+    const insights = computeInsights(
+      itemMetaSnapshot,
+      currentLogsRes.data ?? [],
+      currentAlertsRes.data ?? [],
+      prevLogsRes.data ?? [],
+      prevAlertsRes.data ?? [],
+      prevExpiriesRes.data ?? [],
+      insightWindowDays,
+      insightRangeKey,
+    );
 
-  const insights = computeInsights(
-    itemMeta.values(),
-    currentLogsRes.data ?? [],
-    currentAlertsRes.data ?? [],
-    prevLogsRes.data ?? [],
-    prevAlertsRes.data ?? [],
-    prevExpiriesRes.data ?? [],
-    insightWindowDays,
-    insightRangeKey,
-  );
+    /*
+      ── Shelf utilization sparkline ──────────────────────────────────
+      For each day in the current window, count how many *distinct*
+      slots had any weight reading on that day. "Slot has a log today"
+      stands in for "slot was in use today" — fine for a trend line.
+    */
+    const dayMs = 86_400_000;
+    const utilByDay = new Map<number, Set<number>>();
+    for (const log of utilLogsRes.data ?? []) {
+      const day = Math.floor(new Date(log.recorded_at).getTime() / dayMs);
+      const slot = itemIdToSlot.get(log.item_id);
+      if (slot === undefined) continue;
+      const set = utilByDay.get(day) ?? new Set<number>();
+      set.add(slot);
+      utilByDay.set(day, set);
+    }
+    const utilizationSeries: number[] = [];
+    const startDay = Math.floor((nowMs - windowMs) / dayMs);
+    const endDay = Math.floor(nowMs / dayMs);
+    for (let d = startDay; d <= endDay; d++) {
+      utilizationSeries.push(utilByDay.get(d)?.size ?? 0);
+    }
+    const utilizationAvg =
+      utilizationSeries.length > 0
+        ? utilizationSeries.reduce((s, v) => s + v, 0) / utilizationSeries.length
+        : 0;
+    const utilization = {
+      series: utilizationSeries,
+      avgFilled: Math.round(utilizationAvg * 10) / 10,
+      currentFilled: currentItemMetaSize,
+      totalSlots: SLOTS_PER_SHELF,
+    };
 
-  /*
-    ── Shelf utilization sparkline ────────────────────────────────────
-    For each day in the current window, count how many *distinct* slots
-    had any weight reading on that day. This is intentionally simple:
-    "slot has a log today" stands in for "slot was in use today". It
-    misses days where the Pi was offline but the slot was still
-    physically occupied — fine for a sparkline trend, not a metric.
-  */
-  const dayMs = 86_400_000;
-  const utilByDay = new Map<number, Set<number>>();
-  const itemIdToSlot = new Map<string, number>();
-  for (const meta of itemMeta.values()) itemIdToSlot.set(meta.id, meta.scaleIndex);
-  for (const log of utilLogsRes.data ?? []) {
-    const day = Math.floor(new Date(log.recorded_at).getTime() / dayMs);
-    const slot = itemIdToSlot.get(log.item_id);
-    if (slot === undefined) continue;
-    const set = utilByDay.get(day) ?? new Set<number>();
-    set.add(slot);
-    utilByDay.set(day, set);
-  }
-  const utilizationSeries: number[] = [];
-  const startDay = Math.floor((nowMs - windowMs) / dayMs);
-  const endDay = Math.floor(nowMs / dayMs);
-  for (let d = startDay; d <= endDay; d++) {
-    utilizationSeries.push(utilByDay.get(d)?.size ?? 0);
-  }
-  const utilizationAvg =
-    utilizationSeries.length > 0
-      ? utilizationSeries.reduce((s, v) => s + v, 0) / utilizationSeries.length
-      : 0;
-  const utilizationCurrent = itemMeta.size; // slots currently filled
-  const utilization = {
-    series: utilizationSeries,
-    avgFilled: Math.round(utilizationAvg * 10) / 10,
-    currentFilled: utilizationCurrent,
-    totalSlots: SLOTS_PER_SHELF,
-  };
+    return { ...insights, utilization };
+  })();
 
   return {
     shelf,
     slots,
     itemIds,
     lastSyncedAt,
-    insights: {
-      ...insights,
-      utilization,
-    },
+    /*
+      Streamed: SvelteKit flushes the synchronous parts of this
+      response immediately, then sends the insights payload when the
+      promise above resolves. The page wraps the Insights tab in a
+      `{#await}` block with a skeleton fallback.
+    */
+    insights: insightsPromise,
   };
 };
 

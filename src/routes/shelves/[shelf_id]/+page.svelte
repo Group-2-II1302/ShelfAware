@@ -136,7 +136,13 @@
   })
 
   function setRange(next: string) {
-    if (next === data.insights.range) return
+    /*
+      Insights stream from the server; treat the URL as the source of
+      truth for the current range so we can early-out without
+      awaiting the promise.
+    */
+    const current = page.url.searchParams.get('range') ?? '30d'
+    if (next === current) return
     const url = new URL(page.url)
     if (next === '30d') {
       url.searchParams.delete('range')
@@ -753,7 +759,38 @@
 
   </div>
   {:else}
-  {@const ins = data.insights}
+  <!--
+    Per-shelf insights are streamed from the server so the Items tab
+    can render the moment shelf metadata + slots are ready, without
+    waiting on five heavy weight-log queries. While the Insights tab
+    promise is pending we show a skeleton; the page is still
+    interactive (tabs, kebab menu, etc.).
+  -->
+  {#await data.insights}
+    <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights insights--loading" aria-busy="true">
+      <div class="range-toggle range-toggle--skeleton" aria-hidden="true">
+        <span class="skeleton-chip"></span>
+        <span class="skeleton-chip"></span>
+        <span class="skeleton-chip"></span>
+      </div>
+      <div class="overview overview--skeleton" aria-hidden="true">
+        <div class="overview__metric"><span class="skeleton-line skeleton-line--lg"></span><span class="skeleton-line skeleton-line--sm"></span></div>
+        <div class="overview__metric"><span class="skeleton-line skeleton-line--lg"></span><span class="skeleton-line skeleton-line--sm"></span></div>
+        <div class="overview__metric"><span class="skeleton-line skeleton-line--lg"></span><span class="skeleton-line skeleton-line--sm"></span></div>
+      </div>
+      <div class="insight-card insight-card--skeleton" aria-hidden="true">
+        <span class="skeleton-line skeleton-line--md"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line"></span>
+      </div>
+      <div class="insight-card insight-card--skeleton" aria-hidden="true">
+        <span class="skeleton-line skeleton-line--md"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line skeleton-line--short"></span>
+      </div>
+      <span class="visually-hidden">Loading insights…</span>
+    </div>
+  {:then ins}
   {@const sparse = ins.daysOfHistory < ins.minDataDays}
   <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
     <div class="range-toggle" role="group" aria-label="Time range">
@@ -1049,6 +1086,14 @@
       {/if}
     </section>
   </div>
+  {:catch error}
+    <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights insights--error">
+      <p class="insights__sparse-title">Couldn't load insights</p>
+      <p class="insights__sparse-body">
+        {error instanceof Error ? error.message : 'Please try refreshing the page.'}
+      </p>
+    </div>
+  {/await}
   {/if}
 </main>
 
@@ -1877,6 +1922,108 @@
     font-size: 0.9rem;
     line-height: 1.45;
     opacity: 0.85;
+  }
+
+  /*
+    Skeleton placeholders shown while the streamed insights payload
+    resolves. Layout mirrors the real panel (range chips, overview
+    row, two cards) so swap-in feels stable.
+  */
+  .insights--loading {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .range-toggle--skeleton,
+  .overview--skeleton {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .overview--skeleton .overview__metric {
+    flex: 1;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .insight-card--skeleton {
+    display: grid;
+    gap: 0.5rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+
+  .skeleton-line,
+  .skeleton-chip {
+    display: block;
+    height: 0.85rem;
+    border-radius: 6px;
+    background: linear-gradient(
+      90deg,
+      rgba(51, 42, 38, 0.06) 0%,
+      rgba(51, 42, 38, 0.12) 50%,
+      rgba(51, 42, 38, 0.06) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+
+  .skeleton-line {
+    width: 100%;
+  }
+  .skeleton-line--lg {
+    height: 1.4rem;
+    width: 60%;
+  }
+  .skeleton-line--md {
+    height: 1rem;
+    width: 40%;
+  }
+  .skeleton-line--sm {
+    height: 0.7rem;
+    width: 50%;
+  }
+  .skeleton-line--short {
+    width: 70%;
+  }
+
+  .skeleton-chip {
+    height: 1.6rem;
+    width: 3.5rem;
+    border-radius: 999px;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-line,
+    .skeleton-chip {
+      animation: none;
+    }
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .insights--error {
+    background: rgba(192, 57, 43, 0.08);
+    border: 1px solid rgba(192, 57, 43, 0.2);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.1rem;
   }
 
   .insight-card {
