@@ -188,6 +188,14 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
         today: expiring.filter((i) => i.daysToExpiry === 0).length,
         soon: expiring.filter((i) => (i.daysToExpiry ?? 0) > 0).length,
       },
+      lowStockBuckets: {
+        empty: lowStock.filter(
+          (i) => i.currentWeightG !== null && i.currentWeightG <= 0,
+        ).length,
+        low: lowStock.filter(
+          (i) => i.currentWeightG === null || i.currentWeightG > 0,
+        ).length,
+      },
     },
   };
 };

@@ -3,7 +3,7 @@
   import { invalidate } from '$app/navigation'
   import type { PageData } from './$types'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
-  import { IconMoodSmileBeam } from '@tabler/icons-svelte'
+  import { IconMoodSmileBeam, IconPlus } from '@tabler/icons-svelte'
 
   let { data }: { data: PageData } = $props()
 
@@ -46,13 +46,24 @@
     us subscribing to every related table.
   */
   let invalidateTimer: ReturnType<typeof setTimeout> | undefined
+  let scheduledDelay = Number.POSITIVE_INFINITY
 
-  function scheduleRefresh() {
-    if (invalidateTimer) return
+  /*
+    Debounced invalidate. shelf_items changes (weight crossing the
+    low-stock threshold, expiry edits, inserts/deletes) need to be
+    reflected in the "Now" lists quickly, so they pass a small delay.
+    weight_logs inserts only matter for the sync badge — patched
+    optimistically — so they use a longer safety-net delay.
+  */
+  function scheduleRefresh(delay: number = 30_000) {
+    if (invalidateTimer && delay >= scheduledDelay) return
+    if (invalidateTimer) clearTimeout(invalidateTimer)
+    scheduledDelay = delay
     invalidateTimer = setTimeout(() => {
       invalidateTimer = undefined
+      scheduledDelay = Number.POSITIVE_INFINITY
       invalidate('app:shelves')
-    }, 30_000)
+    }, delay)
   }
 
   let channel: ReturnType<typeof data.supabase.channel> | undefined
@@ -83,6 +94,19 @@
             liveSyncBy = { ...liveSyncBy, [shelfId]: row.recorded_at }
           }
         },
+      )
+      /*
+        Any change to shelf_items can affect the "Now" lists (weight
+        crossed the low-stock threshold, expiry edited, item replaced,
+        new item added, item removed). Cheaper and more correct to
+        refresh the server load than to mirror the full bucket logic
+        client-side — but debounced so a flurry of weight updates from
+        the Pi doesn't thrash the network.
+      */
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shelf_items' },
+        () => scheduleRefresh(2_500),
       )
       .subscribe()
   })
@@ -127,7 +151,10 @@
 
   function formatExpiry(days: number | null): string {
     if (days === null) return ''
-    if (days < 0) return Math.abs(days) === 1 ? 'expired yesterday' : `expired ${Math.abs(days)}d ago`
+    if (days < 0) {
+      const ago = Math.abs(days)
+      return ago === 1 ? 'expired yesterday' : `expired ${ago} days ago`
+    }
     if (days === 0) return 'expires today'
     if (days === 1) return 'expires tomorrow'
     return `in ${days} days`
@@ -183,7 +210,7 @@
           class="stat-card stat-card--expiring"
           class:stat-card--muted={data.actions.expiringTotal === 0}
         >
-          <header class="stat-card__head">
+          <header class="stat-card__head" aria-live="polite" aria-atomic="true">
             <span class="stat-card__count">{data.actions.expiringTotal}</span>
             <span class="stat-card__label">
               {data.actions.expiringTotal === 1 ? 'item expiring' : 'items expiring'}
@@ -231,13 +258,22 @@
         </article>
 
         <article class="stat-card" class:stat-card--muted={data.actions.lowStockTotal === 0}>
-          <header class="stat-card__head">
+          <header class="stat-card__head" aria-live="polite" aria-atomic="true">
             <span class="stat-card__count">{data.actions.lowStockTotal}</span>
             <span class="stat-card__label">
               {data.actions.lowStockTotal === 1 ? 'item running low' : 'items running low'}
             </span>
           </header>
           {#if data.actions.lowStockTotal > 0}
+            <p class="stat-card__breakdown">
+              {#if data.actions.lowStockBuckets.empty > 0}
+                <span class="chip chip--alert">{data.actions.lowStockBuckets.empty} empty</span>
+              {/if}
+              {#if data.actions.lowStockBuckets.low > 0}
+                <span class="chip chip--warn">{data.actions.lowStockBuckets.low} low</span>
+              {/if}
+            </p>
+
             <ul class="stat-card__list">
               {#each data.actions.lowStock as item (item.id)}
                 <li>
@@ -283,6 +319,22 @@
           </a>
         </li>
       {/each}
+      <li class="shelf-list__item">
+        <a
+          href="/setup"
+          class="shelf-list__link shelf-list__link--add"
+          class:shelf-list__link--add-hero={data.shelves.length === 0}
+        >
+          <span class="shelf-list__add-icon" aria-hidden="true">
+            <IconPlus size={20} stroke={1.75} />
+          </span>
+          <span class="shelf-list__name">
+            {data.shelves.length === 0
+              ? 'Pair your first shelf'
+              : 'Pair a new shelf'}
+          </span>
+        </a>
+      </li>
     </ul>
   </section>
 </main>
@@ -584,5 +636,37 @@
     font-weight: 500;
     overflow-wrap: anywhere;
     min-width: 0;
+  }
+
+  .shelf-list__link--add {
+    background: transparent;
+    border-style: dashed;
+    color: var(--text);
+    justify-content: flex-start;
+    gap: 0.6rem;
+  }
+
+  .shelf-list__link--add:hover,
+  .shelf-list__link--add:focus-visible {
+    background: var(--warn-soft);
+  }
+
+  .shelf-list__link--add-hero {
+    background: var(--warn-soft);
+    border-style: solid;
+    border-color: var(--warn);
+    padding: 1.25rem 1rem;
+  }
+
+  .shelf-list__add-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: var(--radius-pill);
+    background: var(--warn);
+    color: #fff;
+    flex-shrink: 0;
   }
 </style>

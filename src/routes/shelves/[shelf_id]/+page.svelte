@@ -439,6 +439,35 @@
   .slot {
     margin: 0;
     display: flex;
+    border-radius: var(--radius-lg);
+  }
+
+  /*
+    When the user arrives via a #slot-N deep link (from the
+    dashboard "Now" section), pulse the targeted slot briefly so
+    they can spot which item we just routed them to.
+  */
+  .slot:target .slot-card {
+    animation: slot-target-pulse 1.6s ease-out 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .slot:target .slot-card {
+      animation: none;
+      box-shadow: 0 0 0 2px var(--matcha);
+    }
+  }
+
+  @keyframes slot-target-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(122, 139, 63, 0);
+    }
+    25% {
+      box-shadow: 0 0 0 4px rgba(122, 139, 63, 0.55);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(122, 139, 63, 0);
+    }
   }
 
   .slot-card {
