@@ -3,6 +3,7 @@
   import { invalidate } from '$app/navigation'
   import type { PageData } from './$types'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
+  import { IconMoodSmileBeam } from '@tabler/icons-svelte'
 
   let { data }: { data: PageData } = $props()
 
@@ -91,6 +92,39 @@
     if (channel) channel.unsubscribe()
   })
 
+  function greeting(): string {
+    const hour = new Date().getHours()
+    if (hour < 5) return 'still up'
+    if (hour < 12) return 'good morning'
+    if (hour < 17) return 'good afternoon'
+    if (hour < 22) return 'good evening'
+    return 'good night'
+  }
+
+  function subtitle(): string {
+    /*
+      Pick a subtitle that adapts to the user's situation. Keeps the
+      tone warm without being twee. Reads what's actually on the page
+      via data.actions so it never lies.
+    */
+    if (data.actions.expiringTotal === 0 && data.actions.lowStockTotal === 0) {
+      return data.shelves.length === 0
+        ? "let's get your first shelf paired"
+        : "your kitchen is looking tidy today"
+    }
+    if (data.actions.expiringTotal > 0 && data.actions.lowStockTotal > 0) {
+      return "a couple of things need your attention"
+    }
+    if (data.actions.expiringTotal > 0) {
+      return data.actions.expiringTotal === 1
+        ? 'one item needs eating soon'
+        : 'a few items need eating soon'
+    }
+    return data.actions.lowStockTotal === 1
+      ? 'one item is running low'
+      : 'some items are running low'
+  }
+
   function formatExpiry(days: number | null): string {
     if (days === null) return ''
     if (days < 0) return Math.abs(days) === 1 ? 'expired yesterday' : `expired ${Math.abs(days)}d ago`
@@ -122,8 +156,17 @@
 
 <main class="dashboard">
   <header class="dashboard__header">
-    <h1>welcome to <span class="brand">shelfAware</span></h1>
-    <p class="dashboard__subtitle">your kitchen at a glance</p>
+    <h1>
+      {greeting()}{data.firstName ? `, ${data.firstName}` : ''}<span
+        class="greet-mark"
+        aria-hidden="true">&nbsp;<IconMoodSmileBeam
+          size={26}
+          stroke={1.75}
+        /></span>
+    </h1>
+    <p class="dashboard__subtitle">
+      welcome back to <span class="brand">ShelfAware</span> - {subtitle()}
+    </p>
   </header>
 
   <section class="now" aria-labelledby="now-heading">
@@ -266,6 +309,53 @@
   .brand {
     color: var(--matcha-deep);
     font-weight: 600;
+  }
+
+  .greet-mark {
+    /*
+      inline-block + white-space: nowrap on a span that starts with
+      a &nbsp; glues the smiley to whatever word ends the heading.
+      That way it follows "Christopher" onto a wrapped line instead
+      of dropping to its own line on narrow phones.
+    */
+    display: inline-block;
+    vertical-align: baseline;
+    color: var(--matcha-deep);
+    white-space: nowrap;
+    transform-origin: 50% 50%;
+    animation: greet-pulse 1.6s ease-in-out 0.3s 2;
+  }
+
+  .greet-mark :global(svg) {
+    display: inline-block;
+    vertical-align: middle;
+    /*
+      Cascadia Mono has a tall x-height; nudge the icon up so it
+      sits visually centered against the lowercase letters rather
+      than aligning to the descender line.
+    */
+    transform: translateY(-0.10em);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .greet-mark {
+      animation: none;
+    }
+  }
+
+  @keyframes greet-pulse {
+    0%, 100% {
+      transform: scale(1) rotate(0deg);
+    }
+    25% {
+      transform: scale(1.15) rotate(-6deg);
+    }
+    50% {
+      transform: scale(1) rotate(6deg);
+    }
+    75% {
+      transform: scale(1.1) rotate(-3deg);
+    }
   }
 
   .dashboard__subtitle {

@@ -22,14 +22,20 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   */
   depends("app:shelves");
 
-  const { data: shelves, error } = await locals.supabase
-    .from("shelves")
-    .select("id, name")
-    .order("name");
+  const [{ data: shelves, error }, { data: profile }] = await Promise.all([
+    locals.supabase.from("shelves").select("id, name").order("name"),
+    locals.supabase
+      .from("profiles")
+      .select("first_name")
+      .eq("id", locals.user?.id ?? "")
+      .maybeSingle(),
+  ]);
 
   if (error) {
     throw error;
   }
+
+  const firstName = profile?.first_name?.trim() || null;
 
   /*
     Compute "last seen" per shelf so the dashboard can render a sync
@@ -166,6 +172,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   return {
     shelves: shelvesWithSync,
     itemShelfMap,
+    firstName,
     actions: {
       expiring: expiring.slice(0, ACTION_LIST_LIMIT),
       lowStock: lowStock.slice(0, ACTION_LIST_LIMIT),
