@@ -803,8 +803,8 @@
   .tabs__btn--active {
     opacity: 1;
     font-weight: 600;
-    border-bottom-color: var(--matcha);
-    color: var(--matcha-deep);
+    border-bottom-color: var(--text);
+    color: var(--text);
   }
 
   /* ── Insights tab ──────────────────────────────────────────────────── */

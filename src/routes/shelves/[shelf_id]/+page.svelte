@@ -27,7 +27,7 @@
     IconTrendingDown,
     IconAlertTriangle,
     IconLayoutGrid,
-    IconChartBar,
+    IconDotsVertical,
   } from '@tabler/icons-svelte'
 
   const MAX_SHELF_NAME_LEN = 40
@@ -36,10 +36,20 @@
   let renameError = $state<string | null>(null)
   let nameInputEl: HTMLInputElement | undefined
 
+  /*
+    Shelf-level actions (rename / delete) are tucked behind a kebab
+    menu next to the title so the destructive delete isn't a tap-by-
+    accident risk while browsing items. The menu is dismissed on
+    outside click and Escape, both wired up in onMount below.
+  */
+  let menuOpen = $state(false)
+  let menuRoot: HTMLDivElement | undefined
+
   function startEditName() {
     nameDraft = data.shelf.name
     renameError = null
     editingName = true
+    menuOpen = false
     /*
       Focus the input on the next microtask so the element exists.
       Select-all so the user can immediately type a replacement.
@@ -53,6 +63,15 @@
   function cancelEditName() {
     editingName = false
     renameError = null
+  }
+
+  function confirmDeleteShelf(e: Event) {
+    const confirmed = confirm(
+      `Delete "${data.shelf.name}"? This will remove all items and weight history. This cannot be undone.`,
+    )
+    if (!confirmed) {
+      e.preventDefault()
+    }
   }
 
   let { data }: { data: PageData } = $props()
@@ -243,7 +262,26 @@
 
   let channel: ReturnType<typeof data.supabase.channel> | undefined
 
+  /*
+    Global dismissers for the kebab menu. Bound at mount so they're
+    only active in the browser; cleaned up in onDestroy below.
+  */
+  function handleDocClick(e: MouseEvent) {
+    if (!menuOpen) return
+    if (menuRoot && !menuRoot.contains(e.target as Node)) {
+      menuOpen = false
+    }
+  }
+  function handleDocKey(e: KeyboardEvent) {
+    if (menuOpen && e.key === 'Escape') {
+      menuOpen = false
+    }
+  }
+
   onMount(() => {
+    document.addEventListener('click', handleDocClick)
+    document.addEventListener('keydown', handleDocKey)
+
     if (data.itemIds.length === 0) return
     channel = data.supabase
       .channel(`shelf-${data.shelf.id}-live`)
@@ -315,6 +353,8 @@
   onDestroy(() => {
     if (invalidateTimer) clearTimeout(invalidateTimer)
     if (channel) channel.unsubscribe()
+    document.removeEventListener('click', handleDocClick)
+    document.removeEventListener('keydown', handleDocKey)
   })
 
   /**
@@ -474,15 +514,48 @@
         <p class="shelf-title-error" role="alert">{renameError}</p>
       {/if}
     {:else}
-      <button
-        type="button"
-        class="shelf-title shelf-title--editable"
-        onclick={startEditName}
-        aria-label="Rename shelf"
-      >
-        <span>{data.shelf.name}</span>
-        <IconPencil size={18} stroke={1.75} class="shelf-title__pencil" />
-      </button>
+      <h1 class="shelf-title">{data.shelf.name}</h1>
+
+      <div class="shelf-menu" bind:this={menuRoot}>
+        <button
+          type="button"
+          class="shelf-menu__trigger"
+          aria-label="Shelf settings"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}
+        >
+          <IconDotsVertical size={20} stroke={1.75} />
+        </button>
+
+        {#if menuOpen}
+          <div class="shelf-menu__panel" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              class="shelf-menu__item"
+              onclick={startEditName}
+            >
+              <IconPencil size={16} stroke={1.75} />
+              <span>Rename shelf</span>
+            </button>
+            <form
+              method="POST"
+              action="?/deleteShelf"
+              onsubmit={confirmDeleteShelf}
+            >
+              <button
+                type="submit"
+                role="menuitem"
+                class="shelf-menu__item shelf-menu__item--danger"
+              >
+                <IconTrash size={16} stroke={1.75} />
+                <span>Delete shelf</span>
+              </button>
+            </form>
+          </div>
+        {/if}
+      </div>
     {/if}
 
     <SyncStatusBadge
@@ -502,8 +575,7 @@
       aria-controls="panel-items"
       onclick={() => (activeTab = 'items')}
     >
-      <IconLayoutGrid size={16} stroke={1.75} />
-      <span>Items</span>
+      Items
     </button>
     <button
       type="button"
@@ -515,8 +587,7 @@
       aria-controls="panel-insights"
       onclick={() => (activeTab = 'insights')}
     >
-      <IconChartBar size={16} stroke={1.75} />
-      <span>Insights</span>
+      Insights
     </button>
   </div>
 
@@ -680,26 +751,6 @@
     </section>
   {/each}
 
-  <section class="danger-zone" aria-labelledby="danger-zone-heading">
-    <h2 id="danger-zone-heading" class="danger-zone__title">Shelf settings</h2>
-    <form
-      method="POST"
-      action="?/deleteShelf"
-      onsubmit={(e) => {
-        const confirmed = confirm(
-          `Delete "${data.shelf.name}"? This will remove all items and weight history. This cannot be undone.`,
-        )
-        if (!confirmed) {
-          e.preventDefault()
-        }
-      }}
-    >
-      <button type="submit" class="danger-zone__btn">
-        <IconTrash size={18} stroke={1.75} />
-        Delete shelf
-      </button>
-    </form>
-  </section>
   </div>
   {:else}
   {@const ins = data.insights}
@@ -1047,34 +1098,92 @@
     margin: 0;
     font-size: 1.5rem;
     line-height: 1.2;
-  }
-
-  .shelf-title--editable {
-    background: none;
-    border: none;
-    padding: 0;
-    color: inherit;
-    font: inherit;
     font-weight: 700;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    text-align: left;
   }
 
   /*
-    Pencil hint stays muted until the user hovers/focuses the title;
-    it's just an affordance, not a separate action.
+    Kebab "shelf settings" menu next to the title. We anchor a
+    relatively-positioned wrapper around the trigger so the floating
+    panel can be absolutely positioned beneath it without escaping the
+    header layout.
   */
-  .shelf-title--editable :global(.shelf-title__pencil) {
-    opacity: 0.4;
-    transition: opacity 0.15s ease;
+  .shelf-menu {
+    position: relative;
+    display: inline-flex;
   }
 
-  .shelf-title--editable:hover :global(.shelf-title__pencil),
-  .shelf-title--editable:focus-visible :global(.shelf-title__pencil) {
+  .shelf-menu__trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    background: transparent;
+    color: inherit;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    opacity: 0.65;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+  }
+
+  .shelf-menu__trigger:hover,
+  .shelf-menu__trigger:focus-visible,
+  .shelf-menu__trigger[aria-expanded='true'] {
     opacity: 1;
+    background: var(--background);
+  }
+
+  .shelf-menu__panel {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 30;
+    min-width: 12rem;
+    padding: 0.3rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .shelf-menu__panel form {
+    margin: 0;
+    display: flex;
+  }
+
+  .shelf-menu__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+  }
+
+  .shelf-menu__item:hover,
+  .shelf-menu__item:focus-visible {
+    background: var(--background);
+  }
+
+  .shelf-menu__item--danger {
+    color: var(--error, #c0392b);
+  }
+
+  .shelf-menu__item--danger:hover,
+  .shelf-menu__item--danger:focus-visible {
+    background: rgba(192, 57, 43, 0.08);
   }
 
   .shelf-title-form {
@@ -1597,83 +1706,42 @@
     }
   }
 
-  /* ── Danger zone ─────────────────────────────────────────────────── */
-
-  .danger-zone {
-    margin-top: 2.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--border);
-  }
-
-  .danger-zone__title {
-    margin: 0 0 0.75rem;
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.6;
-    font-weight: 600;
-  }
-
-  .danger-zone__btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.55rem 0.9rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--error, #c0392b);
-    background: transparent;
-    color: var(--error, #c0392b);
-    font: inherit;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-  }
-
-  .danger-zone__btn:hover,
-  .danger-zone__btn:focus-visible {
-    background: var(--error, #c0392b);
-    color: #fff;
-  }
-
-  /* ── Items / Insights tabs ─────────────────────────────────────────── */
+  /* ── Items / Insights tabs (matches dashboard underline style) ─────── */
 
   .tabs {
-    display: inline-flex;
-    align-self: flex-start;
-    margin: 0.25rem 0 0.85rem;
-    padding: 3px;
-    border-radius: var(--radius-pill);
-    background: var(--background);
-    border: 1px solid var(--border);
-    gap: 0;
+    display: flex;
+    gap: 0.25rem;
+    margin: 0 -0.25rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    position: relative;
   }
 
   .tabs__btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    border: none;
+    flex: 1;
     background: transparent;
+    border: none;
     color: var(--text);
     font: inherit;
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     font-weight: 500;
-    padding: 0.35rem 0.8rem;
-    border-radius: var(--radius-pill);
+    padding: 0.65rem 0.5rem 0.7rem;
     cursor: pointer;
-    opacity: 0.6;
-    transition: background-color 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+    opacity: 0.55;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: opacity 0.15s ease, border-color 0.2s ease;
   }
 
-  .tabs__btn:hover {
-    opacity: 0.9;
+  .tabs__btn:hover,
+  .tabs__btn:focus-visible {
+    opacity: 0.85;
   }
 
   .tabs__btn--active {
-    background: var(--surface);
-    color: var(--matcha-deep);
     opacity: 1;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    font-weight: 600;
+    border-bottom-color: var(--text);
+    color: var(--text);
   }
 
   /* ── Insights panel ────────────────────────────────────────────────── */
