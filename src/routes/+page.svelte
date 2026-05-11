@@ -1,11 +1,42 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { invalidate } from '$app/navigation'
+  import { page } from '$app/state'
+  import { replaceState } from '$app/navigation'
   import type { PageData } from './$types'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
-  import { IconMoodSmileBeam, IconPlus } from '@tabler/icons-svelte'
+  import Sparkline from '$lib/components/Sparkline.svelte'
+  import {
+    IconMoodSmileBeam,
+    IconPlus,
+    IconTrendingDown,
+    IconAlertTriangle,
+    IconTrash,
+  } from '@tabler/icons-svelte'
 
   let { data }: { data: PageData } = $props()
+
+  /*
+    Tab state, persisted in the URL via ?tab=insights so refresh and
+    bookmarks survive. "today" is the default and elides the query
+    param entirely (no ?tab=today noise in the address bar).
+  */
+  type Tab = 'today' | 'insights'
+  let activeTab = $state<Tab>(
+    page.url.searchParams.get('tab') === 'insights' ? 'insights' : 'today',
+  )
+
+  function setTab(next: Tab) {
+    if (next === activeTab) return
+    activeTab = next
+    const url = new URL(page.url)
+    if (next === 'today') {
+      url.searchParams.delete('tab')
+    } else {
+      url.searchParams.set('tab', next)
+    }
+    replaceState(url.toString(), page.state)
+  }
 
   /*
     Local mirror of the per-shelf lastSyncedAt so we can update it in
@@ -160,6 +191,25 @@
     return `in ${days} days`
   }
 
+  function formatGrams(g: number): string {
+    if (g >= 1000) return `${(g / 1000).toFixed(1)} kg`
+    return `${Math.round(g)} g`
+  }
+
+  function formatGramsPerDay(g: number): string {
+    if (g >= 1000) return `${(g / 1000).toFixed(2)} kg/day`
+    if (g >= 10) return `${Math.round(g)} g/day`
+    return `${g.toFixed(1)} g/day`
+  }
+
+  function formatExpiredAgo(expiryDate: string): string {
+    const expiry = new Date(expiryDate).getTime()
+    const days = Math.floor((Date.now() - expiry) / 86_400_000)
+    if (days <= 0) return 'today'
+    if (days === 1) return 'yesterday'
+    return `${days} days ago`
+  }
+
   function formatLowStock(item: {
     currentWeightG: number | null
     thresholdG: number | null
@@ -195,6 +245,36 @@
       welcome back to <span class="brand">ShelfAware</span> - {subtitle()}
     </p>
   </header>
+
+  <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+    <button
+      type="button"
+      role="tab"
+      class="tabs__btn"
+      class:tabs__btn--active={activeTab === 'today'}
+      aria-selected={activeTab === 'today'}
+      aria-controls="panel-today"
+      id="tab-today"
+      onclick={() => setTab('today')}
+    >
+      Today
+    </button>
+    <button
+      type="button"
+      role="tab"
+      class="tabs__btn"
+      class:tabs__btn--active={activeTab === 'insights'}
+      aria-selected={activeTab === 'insights'}
+      aria-controls="panel-insights"
+      id="tab-insights"
+      onclick={() => setTab('insights')}
+    >
+      Insights
+    </button>
+  </nav>
+
+  {#if activeTab === 'today'}
+  <div role="tabpanel" id="panel-today" aria-labelledby="tab-today">
 
   <section class="now" aria-labelledby="now-heading">
     <h2 id="now-heading" class="section-title">Now</h2>
@@ -362,6 +442,196 @@
       </li>
     </ul>
   </section>
+
+  </div>
+  {:else}
+  {@const ins = data.insights}
+  {@const sparse = ins.daysOfHistory < ins.minDataDays}
+  <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
+    {#if sparse}
+      <div class="insights__sparse">
+        <p class="insights__sparse-title">Insights are warming up</p>
+        <p class="insights__sparse-body">
+          Come back in a few days — once your shelves have built up a bit of
+          weight history, this is where you'll see what you eat through
+          fastest, what's always running low, and what's been wasted.
+        </p>
+      </div>
+    {/if}
+
+    <!-- Wasted summary card -->
+    <section class="insight-card" aria-labelledby="wasted-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--alert" aria-hidden="true">
+          <IconTrash size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="wasted-heading" class="insight-card__title">Wasted</h2>
+          <p class="insight-card__subtitle">last {ins.windowDays} days</p>
+        </div>
+      </header>
+
+      {#if sparse}
+        <div class="skeleton skeleton--summary"></div>
+      {:else if ins.wastedItemCount === 0}
+        <p class="insight-card__empty">
+          Nothing wasted in the last {ins.windowDays} days. Nice work.
+        </p>
+      {:else}
+        <p class="wasted-summary">
+          <span class="wasted-summary__count">{ins.wastedItemCount}</span>
+          {ins.wastedItemCount === 1 ? 'item' : 'items'} expired with weight
+          still on the scale &ndash;
+          {#if ins.wastedWeightApproximate}
+            about <strong>{formatGrams(ins.wastedTotalG)}</strong> on-scale
+            (includes container)
+          {:else}
+            roughly <strong>{formatGrams(ins.wastedTotalG)}</strong> of product
+          {/if}
+        </p>
+        <ul class="insight-list">
+          {#each ins.wasted as item (item.itemId)}
+            <li class="insight-row">
+              {#if item.imageUrl}
+                <img
+                  class="insight-row__img"
+                  src={item.imageUrl}
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                />
+              {:else}
+                <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                  {item.name.charAt(0).toUpperCase()}
+                </span>
+              {/if}
+              <div class="insight-row__body">
+                <p class="insight-row__name">{item.name}</p>
+                <p class="insight-row__meta">
+                  expired {formatExpiredAgo(item.expiryDate)} ·
+                  {#if item.weightIsApproximate}
+                    {formatGrams(item.estimatedRemainingG)} on scale
+                  {:else}
+                    ~{formatGrams(item.estimatedRemainingG)} left
+                  {/if}
+                </p>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <!-- Fastest consumed -->
+    <section class="insight-card" aria-labelledby="fastest-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--matcha" aria-hidden="true">
+          <IconTrendingDown size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="fastest-heading" class="insight-card__title">Eat through fastest</h2>
+          <p class="insight-card__subtitle">grams per day, last {ins.windowDays} days</p>
+        </div>
+      </header>
+
+      {#if sparse || ins.fastestConsumed.length === 0}
+        {#if sparse}
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+        {:else}
+          <p class="insight-card__empty">
+            Not enough movement on your shelves yet to rank consumption.
+          </p>
+        {/if}
+      {:else}
+        <ul class="insight-list">
+          {#each ins.fastestConsumed as item (item.itemId)}
+            <li class="insight-row">
+              {#if item.imageUrl}
+                <img
+                  class="insight-row__img"
+                  src={item.imageUrl}
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                />
+              {:else}
+                <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                  {item.name.charAt(0).toUpperCase()}
+                </span>
+              {/if}
+              <div class="insight-row__body">
+                <p class="insight-row__name">{item.name}</p>
+                <p class="insight-row__meta">
+                  {formatGramsPerDay(item.gPerDay)} · {Math.round(item.daysObserved)}d observed
+                </p>
+              </div>
+              <Sparkline
+                values={item.sparkline}
+                width={84}
+                height={28}
+                strokeWidth={1.5}
+              />
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <!-- Always running low -->
+    <section class="insight-card" aria-labelledby="low-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--warn" aria-hidden="true">
+          <IconAlertTriangle size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="low-heading" class="insight-card__title">Always running low</h2>
+          <p class="insight-card__subtitle">
+            triggered low-stock most often, last {ins.windowDays} days
+          </p>
+        </div>
+      </header>
+
+      {#if sparse || ins.alwaysRunningLow.length === 0}
+        {#if sparse}
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+        {:else}
+          <p class="insight-card__empty">
+            Nothing has tripped a low-stock alert in this window.
+          </p>
+        {/if}
+      {:else}
+        <ul class="insight-list">
+          {#each ins.alwaysRunningLow as item (item.itemId)}
+            <li class="insight-row">
+              {#if item.imageUrl}
+                <img
+                  class="insight-row__img"
+                  src={item.imageUrl}
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                />
+              {:else}
+                <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                  {item.name.charAt(0).toUpperCase()}
+                </span>
+              {/if}
+              <div class="insight-row__body">
+                <p class="insight-row__name">{item.name}</p>
+                <p class="insight-row__meta">
+                  {item.alertCount} {item.alertCount === 1 ? 'alert' : 'alerts'}
+                </p>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  </div>
+  {/if}
 </main>
 
 <style>
@@ -375,6 +645,244 @@
 
   .dashboard__header {
     margin-bottom: 1.25rem;
+  }
+
+  /* ── Tabs ───────────────────────────────────────────────────────────── */
+
+  .tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin: 0 -0.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+
+  .tabs__btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 500;
+    padding: 0.65rem 0.5rem 0.7rem;
+    cursor: pointer;
+    opacity: 0.55;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: opacity 0.15s ease, border-color 0.2s ease;
+  }
+
+  .tabs__btn:hover,
+  .tabs__btn:focus-visible {
+    opacity: 0.85;
+  }
+
+  .tabs__btn--active {
+    opacity: 1;
+    font-weight: 600;
+    border-bottom-color: var(--matcha);
+    color: var(--matcha-deep);
+  }
+
+  /* ── Insights tab ──────────────────────────────────────────────────── */
+
+  .insights {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .insights__sparse {
+    background: var(--matcha-soft);
+    border: 1px solid var(--matcha);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.1rem;
+  }
+
+  .insights__sparse-title {
+    margin: 0 0 0.35rem;
+    font-weight: 600;
+    color: var(--matcha-deep);
+  }
+
+  .insights__sparse-body {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    opacity: 0.85;
+  }
+
+  .insight-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.1rem;
+  }
+
+  .insight-card__head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .insight-card__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: var(--radius-md);
+    flex-shrink: 0;
+  }
+
+  .insight-card__icon--matcha {
+    background: var(--matcha-soft);
+    color: var(--matcha-deep);
+  }
+
+  .insight-card__icon--warn {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
+  .insight-card__icon--alert {
+    background: rgba(192, 57, 43, 0.1);
+    color: var(--error, #c0392b);
+  }
+
+  .insight-card__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .insight-card__subtitle {
+    margin: 0.15rem 0 0;
+    font-size: 0.78rem;
+    opacity: 0.65;
+  }
+
+  .insight-card__empty {
+    margin: 0;
+    font-size: 0.9rem;
+    opacity: 0.7;
+  }
+
+  .wasted-summary {
+    margin-bottom: 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    opacity: 0.85;
+  }
+
+  .wasted-summary__count {
+    font-weight: 700;
+    color: var(--error, #c0392b);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wasted-summary__label {
+    /* No special treatment — it now flows inline with the count. */
+  }
+
+  .insight-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .insight-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+
+  .insight-row__img {
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: var(--radius-md);
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--background);
+  }
+
+  .insight-row__img--placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: var(--matcha-deep);
+  }
+
+  .insight-row__body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .insight-row__name {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 500;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .insight-row__meta {
+    margin: 0.1rem 0 0;
+    font-size: 0.78rem;
+    opacity: 0.7;
+  }
+
+  /* ── Skeleton placeholders ─────────────────────────────────────────── */
+
+  .skeleton {
+    border-radius: var(--radius-md);
+    background: linear-gradient(
+      90deg,
+      var(--background) 0%,
+      rgba(0, 0, 0, 0.04) 50%,
+      var(--background) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.6s linear infinite;
+  }
+
+  .skeleton--summary {
+    height: 3rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .skeleton--row {
+    height: 2.4rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .skeleton--row:last-child {
+    margin-bottom: 0;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
   }
 
   .dashboard__header h1 {

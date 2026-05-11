@@ -101,6 +101,24 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   let lowStock: ActionItem[] = [];
 
   /*
+    Item metadata captured while iterating shelf_items for the Now
+    lists. Reused later by the Insights pipeline (consumption rate,
+    waste detection, sparklines) so we don't query the same rows twice.
+  */
+  type InsightItemMeta = {
+    id: string;
+    name: string;
+    brand: string | null;
+    imageUrl: string | null;
+    tareG: number | null;
+    fullG: number | null;
+    currentG: number | null;
+    expiryDate: string | null;
+    createdAt: string | null;
+  };
+  const itemMeta = new Map<string, InsightItemMeta>();
+
+  /*
     Per-shelf rollups for the Shelves section cards. Lets each shelf row
     show fullness ("3 / 6 slots") and a "earliest expires" hint without
     a second query — we already iterate every shelf_item below for the
@@ -142,7 +160,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     const { data: items, error: itemsErr } = await locals.supabase
       .from("shelf_items")
       .select(
-        "id, shelf_id, scale_index, barcode, expiry_date, current_weight_g, low_stock_threshold_g, product_catalog(product_name)",
+        "id, shelf_id, scale_index, barcode, expiry_date, current_weight_g, low_stock_threshold_g, created_at, product_catalog(product_name, brand, image_url, tare_weight_g, full_weight_g)",
       )
       .in("shelf_id", allShelfIds);
 
@@ -200,10 +218,28 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       const product = Array.isArray(row.product_catalog)
         ? row.product_catalog[0]
         : row.product_catalog;
-      const name =
-        (product as { product_name?: string | null } | null)?.product_name ||
-        row.barcode ||
-        "Item";
+      const cat = product as
+        | {
+            product_name?: string | null;
+            brand?: string | null;
+            image_url?: string | null;
+            tare_weight_g?: number | null;
+            full_weight_g?: number | null;
+          }
+        | null;
+      const name = cat?.product_name || row.barcode || "Item";
+
+      itemMeta.set(row.id, {
+        id: row.id,
+        name,
+        brand: cat?.brand ?? null,
+        imageUrl: cat?.image_url ?? null,
+        tareG: cat?.tare_weight_g ?? null,
+        fullG: cat?.full_weight_g ?? null,
+        currentG: row.current_weight_g,
+        expiryDate: row.expiry_date,
+        createdAt: (row as { created_at?: string | null }).created_at ?? null,
+      });
 
       const base: Omit<ActionItem, "daysToExpiry"> = {
         id: row.id,
@@ -252,6 +288,230 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
   const expiringTotal = expiring.length;
   const lowStockTotal = lowStock.length;
+
+  /*
+    ─── Insights pipeline ─────────────────────────────────────────────
+
+    Pulls the last INSIGHT_WINDOW_DAYS of weight_logs across every
+    current item, then derives three things in-memory:
+      1. consumption rate per item (g/day) for "eat through fastest"
+      2. low-stock alert frequency over the same window
+      3. wasted last 30 days = items past expiry whose current weight
+         was still above tare_weight_g (i.e. product remained)
+
+    We deliberately compute client-of-Supabase rather than via a SQL
+    function so the logic stays visible alongside the dashboard load.
+    If the dataset grows large enough that this gets slow, a materialized
+    view (refreshed daily) is the natural next step.
+  */
+  const INSIGHT_WINDOW_DAYS = 30;
+  const INSIGHT_LIST_LIMIT = 3;
+  const MIN_DATA_DAYS = 3; // below this, surface skeleton states client-side
+  const windowMs = INSIGHT_WINDOW_DAYS * 86_400_000;
+  const windowStart = new Date(Date.now() - windowMs);
+
+  type LogPoint = { t: number; w: number };
+  const logsByItem = new Map<string, LogPoint[]>();
+  let earliestLog: number | null = null;
+
+  if (itemMeta.size > 0) {
+    const itemIds = Array.from(itemMeta.keys());
+    const { data: logs, error: logErr } = await locals.supabase
+      .from("weight_logs")
+      .select("item_id, weight_g, recorded_at")
+      .in("item_id", itemIds)
+      .gte("recorded_at", windowStart.toISOString())
+      .order("recorded_at", { ascending: true });
+
+    if (logErr) {
+      console.warn("[insights] weight_logs query failed:", logErr.message);
+    }
+
+    for (const log of logs ?? []) {
+      const t = new Date(log.recorded_at).getTime();
+      if (earliestLog === null || t < earliestLog) earliestLog = t;
+      const arr = logsByItem.get(log.item_id) ?? [];
+      arr.push({ t, w: log.weight_g });
+      logsByItem.set(log.item_id, arr);
+    }
+  }
+
+  /*
+    Consumption rate: slope of weight vs time over the window, clamped
+    to non-negative (we only care about how fast it's emptying, not
+    restocks bumping weight back up). Items with <2 points or <24h of
+    span are excluded — too noisy to rank.
+  */
+  type ConsumptionRow = {
+    itemId: string;
+    name: string;
+    brand: string | null;
+    imageUrl: string | null;
+    gPerDay: number;
+    daysObserved: number;
+    sparkline: number[];
+  };
+
+  const consumption: ConsumptionRow[] = [];
+  for (const [itemId, points] of logsByItem) {
+    if (points.length < 2) continue;
+    const span = points[points.length - 1].t - points[0].t;
+    if (span < 86_400_000) continue; // need at least a day of data
+
+    /*
+      Total *decreases* in weight, ignoring increases (refills).
+      Captures the user's consumption even when an item gets topped
+      up mid-window without distorting the rate.
+    */
+    let totalDrop = 0;
+    for (let i = 1; i < points.length; i++) {
+      const delta = points[i - 1].w - points[i].w;
+      if (delta > 0) totalDrop += delta;
+    }
+
+    const daysObserved = span / 86_400_000;
+    const gPerDay = totalDrop / daysObserved;
+    if (gPerDay <= 0) continue;
+
+    const meta = itemMeta.get(itemId);
+    if (!meta) continue;
+
+    /*
+      Down-sample to ~20 points for the sparkline. Pure cosmetic: at
+      this resolution the visual is fine and the payload stays light.
+    */
+    const SPARK_POINTS = 20;
+    const step = Math.max(1, Math.floor(points.length / SPARK_POINTS));
+    const sparkline: number[] = [];
+    for (let i = 0; i < points.length; i += step) {
+      sparkline.push(points[i].w);
+    }
+    if (sparkline[sparkline.length - 1] !== points[points.length - 1].w) {
+      sparkline.push(points[points.length - 1].w);
+    }
+
+    consumption.push({
+      itemId,
+      name: meta.name,
+      brand: meta.brand,
+      imageUrl: meta.imageUrl,
+      gPerDay,
+      daysObserved,
+      sparkline,
+    });
+  }
+  consumption.sort((a, b) => b.gPerDay - a.gPerDay);
+  const fastestConsumed = consumption.slice(0, INSIGHT_LIST_LIMIT);
+
+  /*
+    "Always running low": count low-stock alerts per item over the
+    window. Uses last_triggered_at so re-triggers within the window
+    each contribute. resolved_at is ignored — we want raw frequency.
+  */
+  type RunningLowRow = {
+    itemId: string;
+    name: string;
+    brand: string | null;
+    imageUrl: string | null;
+    alertCount: number;
+  };
+  const runningLow: RunningLowRow[] = [];
+
+  if (itemMeta.size > 0) {
+    const itemIds = Array.from(itemMeta.keys());
+    const { data: alerts, error: alertErr } = await locals.supabase
+      .from("alerts")
+      .select("item_id, alert_type, last_triggered_at")
+      .in("item_id", itemIds)
+      .eq("alert_type", "low_stock")
+      .gte("last_triggered_at", windowStart.toISOString());
+
+    if (alertErr) {
+      console.warn("[insights] alerts query failed:", alertErr.message);
+    }
+
+    const countByItem = new Map<string, number>();
+    for (const a of alerts ?? []) {
+      countByItem.set(a.item_id, (countByItem.get(a.item_id) ?? 0) + 1);
+    }
+    for (const [itemId, count] of countByItem) {
+      const meta = itemMeta.get(itemId);
+      if (!meta) continue;
+      runningLow.push({
+        itemId,
+        name: meta.name,
+        brand: meta.brand,
+        imageUrl: meta.imageUrl,
+        alertCount: count,
+      });
+    }
+    runningLow.sort((a, b) => b.alertCount - a.alertCount);
+  }
+  const alwaysRunningLow = runningLow.slice(0, INSIGHT_LIST_LIMIT);
+
+  /*
+    Wasted last 30 days: items that expired within the window while
+    still having weight on the scale. Without container (tare) weight
+    we can't say exactly *how much* product remained, so the count is
+    the primary signal and the gram estimate is best-effort:
+      - if tare_weight_g is known, remaining = current - tare
+      - otherwise we report the full on-scale weight, flagged on the
+        row so the UI can hedge the wording
+
+    Only counts currently-present items. Deleted items are gone; for
+    true historical waste tracking we'd need a soft-delete or a
+    dedicated waste_events table later.
+  */
+  type WastedRow = {
+    itemId: string;
+    name: string;
+    brand: string | null;
+    imageUrl: string | null;
+    expiryDate: string;
+    estimatedRemainingG: number;
+    /** True when the gram estimate could not be tare-adjusted. */
+    weightIsApproximate: boolean;
+  };
+  const wasted: WastedRow[] = [];
+  let wastedTotalG = 0;
+  let wastedAnyApproximate = false;
+
+  for (const meta of itemMeta.values()) {
+    if (!meta.expiryDate) continue;
+    const expiryMs = new Date(meta.expiryDate).getTime();
+    if (expiryMs >= todayMs) continue; // not expired yet
+    if (todayMs - expiryMs > windowMs) continue; // outside window
+    if (meta.currentG === null || meta.currentG <= 0) continue; // nothing left
+
+    const remaining =
+      meta.tareG !== null ? meta.currentG - meta.tareG : meta.currentG;
+    if (remaining <= 0) continue;
+
+    const approximate = meta.tareG === null;
+    if (approximate) wastedAnyApproximate = true;
+
+    wasted.push({
+      itemId: meta.id,
+      name: meta.name,
+      brand: meta.brand,
+      imageUrl: meta.imageUrl,
+      expiryDate: meta.expiryDate,
+      estimatedRemainingG: Math.round(remaining),
+      weightIsApproximate: approximate,
+    });
+    wastedTotalG += remaining;
+  }
+  wasted.sort((a, b) => b.estimatedRemainingG - a.estimatedRemainingG);
+
+  /*
+    Data availability hint for the client's skeleton states. If the
+    earliest log we have is recent, there isn't enough history yet
+    for the insights to be trustworthy.
+  */
+  const daysOfHistory =
+    earliestLog === null
+      ? 0
+      : Math.floor((Date.now() - earliestLog) / 86_400_000);
 
   const shelvesEnriched = shelvesWithSync.map((s) => {
     const rollup = shelfRollup[s.id];
@@ -303,6 +563,17 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
           (i) => i.currentWeightG === null || i.currentWeightG > 0,
         ).length,
       },
+    },
+    insights: {
+      windowDays: INSIGHT_WINDOW_DAYS,
+      daysOfHistory,
+      minDataDays: MIN_DATA_DAYS,
+      fastestConsumed,
+      alwaysRunningLow,
+      wasted: wasted.slice(0, INSIGHT_LIST_LIMIT),
+      wastedTotalG: Math.round(wastedTotalG),
+      wastedItemCount: wasted.length,
+      wastedWeightApproximate: wastedAnyApproximate,
     },
   };
 };
