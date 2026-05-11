@@ -1708,12 +1708,22 @@
 
   /* ── Items / Insights tabs (matches dashboard underline style) ─────── */
 
+  /*
+    Sticky tab bar — bleeds edge-to-edge inside the shelf-page's 1rem
+    horizontal padding so the row underneath doesn't show through as
+    it scrolls. Solid background + z-index keep it opaque above the
+    slot grid and insight cards.
+  */
   .tabs {
     display: flex;
     gap: 0.25rem;
-    margin: 0 -0.25rem 1.25rem;
+    margin: 0 -1rem 1.25rem;
+    padding: 0 1rem;
     border-bottom: 1px solid var(--border);
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--background);
   }
 
   .tabs__btn {

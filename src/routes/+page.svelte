@@ -874,12 +874,23 @@
 
   /* ── Tabs ───────────────────────────────────────────────────────────── */
 
+  /*
+    Sticky tab bar. Negative horizontal margins bleed it edge-to-edge
+    inside the .dashboard's 1rem horizontal padding so scrolling
+    content doesn't show through the sides as it passes underneath.
+    Solid background matches --background so the tab stays opaque.
+    z-index above the cards keeps shadows/animations from clipping it.
+  */
   .tabs {
     display: flex;
     gap: 0.25rem;
-    margin: 0 -0.25rem 1.5rem;
+    margin: 0 -1rem 1.5rem;
+    padding: 0 1rem;
     border-bottom: 1px solid var(--border);
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--background);
   }
 
   .tabs__btn {

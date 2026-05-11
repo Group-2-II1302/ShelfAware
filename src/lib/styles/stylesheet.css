@@ -47,8 +47,26 @@ body {
 }
 
 #menu {
-  background: rgba(255, 255, 255, 0.6);
-  width: 320px;
+  /*
+    Solid creamy tint that sits between --background (#F4F1F0) and
+    --surface (#fff) so the pill stands out from the page without
+    looking like a stark white slab. Hairline border softens the edge,
+    layered shadow keeps it floating without looking heavy.
+  */
+  background: #FBF8F5;
+  border: 1px solid rgba(51, 42, 38, 0.06);
+  box-shadow:
+    0 10px 30px rgba(51, 42, 38, 0.10),
+    0 2px 6px rgba(51, 42, 38, 0.06);
+  /*
+    Sized for 5 nav items with a generous tap target each (~3rem
+    square including padding), but bounded by the viewport with a
+    1rem inset so it never bleeds off-screen on the narrowest phones.
+    Width-content lets a future 6th item just work without another
+    edit here.
+  */
+  width: max-content;
+  max-width: calc(100vw - 2rem);
   display: flex;
   border-radius: 100px;
   justify-items: center;
@@ -58,14 +76,15 @@ body {
   transform: translateX(-50%);
 }
 #menu ul {
-  padding: 10px;
+  padding: 8px;
   margin: 0;
   display: flex;
   justify-content: space-between;
+  gap: 0.25rem;
 }
 #menu li {
   list-style: none;
-  padding: 20px;
+  padding: 0.6rem 0.85rem;
 }
 
 .auth-main {
