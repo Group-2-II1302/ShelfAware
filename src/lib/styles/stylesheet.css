@@ -63,23 +63,6 @@ body {
   padding: 20px;
 }
 
-.shelf-list {
-  list-style: none;
-  padding: 0;
-}
-
-.shelf-list__item {
-  border: 1px solid var(--border);
-  padding: 10px;
-  margin: 10px 0;
-}
-
-.shelf-list__link {
-  text-decoration: none;
-  color: inherit;
-  display: block;
-}
-
 .auth-main {
   min-height: 100vh;
   display: flex;

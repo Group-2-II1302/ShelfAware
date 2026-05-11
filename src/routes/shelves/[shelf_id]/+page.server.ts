@@ -230,7 +230,90 @@ export const load: PageServerLoad = async ({ locals, params, depends }) => {
   };
 };
 
+/*
+  Shelf name length cap. Anything longer overflows the dashboard tile
+  caption and clutters the bottom-nav title bar on mobile, so enforce
+  it both on the server (defence-in-depth) and on the client input.
+*/
+const MAX_SHELF_NAME_LEN = 40;
+
 export const actions: Actions = {
+  /**
+   * Rename a shelf. Trims, validates length, and relies on RLS to
+   * ensure the caller is a member of the shelf.
+   */
+  renameShelf: async ({ request, locals, params }) => {
+    const {
+      data: { user },
+    } = await locals.supabase.auth.getUser();
+    if (!user) {
+      return fail(401, { error: "Not authenticated" });
+    }
+
+    const shelfId = params.shelf_id;
+    const formData = await request.formData();
+    const rawName = formData.get("name")?.toString() ?? "";
+    const name = rawName.trim();
+
+    if (!name) {
+      return fail(400, { rename: { error: "Name cannot be empty." } });
+    }
+    if (name.length > MAX_SHELF_NAME_LEN) {
+      return fail(400, {
+        rename: {
+          error: `Name must be ${MAX_SHELF_NAME_LEN} characters or fewer.`,
+        },
+      });
+    }
+
+    const { error: updateError } = await locals.supabase
+      .from("shelves")
+      .update({ name })
+      .eq("id", shelfId);
+
+    if (updateError) {
+      console.error("renameShelf failed:", updateError.message);
+      return fail(500, { rename: { error: updateError.message } });
+    }
+
+    return { rename: { success: true, name } };
+  },
+
+  /**
+   * Delete a shelf entirely. Cascade on shelf_items / weight_logs /
+   * alerts FKs cleans up children. Redirects to the dashboard on
+   * success so the user isn't left looking at a dead shelf page.
+   */
+  deleteShelf: async ({ locals, params }) => {
+    const {
+      data: { user },
+    } = await locals.supabase.auth.getUser();
+    if (!user) {
+      return fail(401, { error: "Not authenticated" });
+    }
+
+    const shelfId = params.shelf_id;
+    const { error: deleteError, count } = await locals.supabase
+      .from("shelves")
+      .delete({ count: "exact" })
+      .eq("id", shelfId);
+
+    if (deleteError) {
+      console.error("deleteShelf failed:", deleteError.message);
+      return fail(500, { delete: { error: deleteError.message } });
+    }
+
+    if (!count) {
+      /*
+        RLS hid the row or it was already gone — either way the
+        client's view is stale, so kick them back to the dashboard.
+      */
+      console.warn(`deleteShelf: no rows deleted for shelf=${shelfId}`);
+    }
+
+    throw redirect(303, "/");
+  },
+
   /**
    * Remove the shelf_items row at a given (shelf_id, scale_index).
    * Used by the per-slot "Delete" button. RLS gates the actual delete

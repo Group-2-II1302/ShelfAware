@@ -1,4 +1,5 @@
 import type { PageServerLoad } from "./$types";
+import { SLOTS_PER_SHELF } from "$lib/shelf";
 
 const EXPIRY_WINDOW_DAYS = 7;
 const ACTION_LIST_LIMIT = 5;
@@ -99,6 +100,43 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   let expiring: ActionItem[] = [];
   let lowStock: ActionItem[] = [];
 
+  /*
+    Per-shelf rollups for the Shelves section cards. Lets each shelf row
+    show fullness ("3 / 6 slots") and a "earliest expires" hint without
+    a second query — we already iterate every shelf_item below for the
+    Now lists.
+  */
+  /*
+    Per-slot state for the folder-tile preview. Most-severe state per
+    scale_index wins (expired > urgent > low > normal). Empty slots
+    stay implicit (anything not in this map renders as a dashed outline).
+  */
+  type SlotState = "normal" | "low" | "urgent" | "expired";
+  const shelfRollup: Record<
+    string,
+    {
+      filledSlots: number;
+      earliestExpiryDays: number | null;
+      filledSet: Set<number>;
+      slotStates: Map<number, SlotState>;
+    }
+  > = {};
+  for (const shelf of shelvesWithSync) {
+    shelfRollup[shelf.id] = {
+      filledSlots: 0,
+      earliestExpiryDays: null,
+      filledSet: new Set(),
+      slotStates: new Map(),
+    };
+  }
+
+  const severity: Record<SlotState, number> = {
+    normal: 0,
+    low: 1,
+    urgent: 2,
+    expired: 3,
+  };
+
   const allShelfIds = shelvesWithSync.map((s) => s.id);
   if (allShelfIds.length > 0) {
     const { data: items, error: itemsErr } = await locals.supabase
@@ -113,6 +151,52 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     }
 
     for (const row of items ?? []) {
+      const rollup = shelfRollup[row.shelf_id];
+      if (rollup) {
+        if (
+          typeof row.scale_index === "number" &&
+          !rollup.filledSet.has(row.scale_index)
+        ) {
+          rollup.filledSet.add(row.scale_index);
+          rollup.filledSlots += 1;
+        }
+
+        if (typeof row.scale_index === "number") {
+          let state: SlotState = "normal";
+          if (row.expiry_date) {
+            const days = Math.ceil(
+              (new Date(row.expiry_date).getTime() - todayMs) / 86_400_000,
+            );
+            if (days < 0) state = "expired";
+            else if (days <= 2) state = "urgent";
+          }
+          if (
+            state === "normal" &&
+            row.low_stock_threshold_g !== null &&
+            row.current_weight_g !== null &&
+            row.current_weight_g <= row.low_stock_threshold_g
+          ) {
+            state = "low";
+          }
+          const prev = rollup.slotStates.get(row.scale_index) ?? "normal";
+          if (severity[state] > severity[prev]) {
+            rollup.slotStates.set(row.scale_index, state);
+          }
+        }
+
+        if (row.expiry_date) {
+          const days = Math.ceil(
+            (new Date(row.expiry_date).getTime() - todayMs) / 86_400_000,
+          );
+          if (
+            rollup.earliestExpiryDays === null ||
+            days < rollup.earliestExpiryDays
+          ) {
+            rollup.earliestExpiryDays = days;
+          }
+        }
+      }
+
       const product = Array.isArray(row.product_catalog)
         ? row.product_catalog[0]
         : row.product_catalog;
@@ -169,8 +253,31 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const expiringTotal = expiring.length;
   const lowStockTotal = lowStock.length;
 
+  const shelvesEnriched = shelvesWithSync.map((s) => {
+    const rollup = shelfRollup[s.id];
+    return {
+      ...s,
+      filledSlots: rollup?.filledSlots ?? 0,
+      totalSlots: SLOTS_PER_SHELF,
+      earliestExpiryDays: rollup?.earliestExpiryDays ?? null,
+      /*
+        Per-slot state for the iOS-folder-style preview on the dashboard.
+        Length SLOTS_PER_SHELF, indexed by scale_index. "empty" means no
+        item in that slot; other values surface urgency so the tile
+        encodes status without a separate text line.
+      */
+      slotStates: Array.from(
+        { length: SLOTS_PER_SHELF },
+        (_, i): "empty" | SlotState =>
+          rollup?.filledSet.has(i)
+            ? (rollup.slotStates.get(i) ?? "normal")
+            : "empty",
+      ),
+    };
+  });
+
   return {
-    shelves: shelvesWithSync,
+    shelves: shelvesEnriched,
     itemShelfMap,
     firstName,
     actions: {

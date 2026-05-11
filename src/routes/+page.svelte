@@ -306,29 +306,54 @@
 
   <section class="shelves" aria-labelledby="shelves-heading">
     <h2 id="shelves-heading" class="section-title">Shelves</h2>
-    <ul class="shelf-list">
+
+    <ul
+      class="folder-grid"
+      class:folder-grid--empty={data.shelves.length === 0}
+    >
       {#each data.shelves as shelf (shelf.id)}
-        <li class="shelf-list__item">
-          <a href="/shelves/{shelf.id}" class="shelf-list__link">
-            <span class="shelf-list__name">{shelf.name}</span>
-            <SyncStatusBadge
-              lastSeen={liveSyncBy[shelf.id]}
-              hasItems={shelf.hasItems}
-              compact
-            />
+        <li class="folder">
+          <a
+            href="/shelves/{shelf.id}"
+            class="folder__link"
+            aria-label="{shelf.name}, {shelf.filledSlots} of {shelf.totalSlots} slots filled"
+          >
+            <div
+              class="folder__preview"
+              role="img"
+              aria-hidden="true"
+            >
+              {#each shelf.slotStates as state, i (i)}
+                <span class="folder__cell folder__cell--{state}"></span>
+              {/each}
+            </div>
+
+            <div class="folder__caption">
+              <span class="folder__name">{shelf.name}</span>
+              <span class="folder__meta">
+                <span class="folder__count">
+                  {shelf.filledSlots}/{shelf.totalSlots}
+                </span>
+                <SyncStatusBadge
+                  lastSeen={liveSyncBy[shelf.id]}
+                  hasItems={shelf.hasItems}
+                  dotOnly
+                />
+              </span>
+            </div>
           </a>
         </li>
       {/each}
-      <li class="shelf-list__item">
-        <a
-          href="/setup"
-          class="shelf-list__link shelf-list__link--add"
-          class:shelf-list__link--add-hero={data.shelves.length === 0}
-        >
-          <span class="shelf-list__add-icon" aria-hidden="true">
-            <IconPlus size={20} stroke={1.75} />
+
+      <li
+        class="folder folder--add"
+        class:folder--add-hero={data.shelves.length === 0}
+      >
+        <a href="/setup" class="folder__link folder__link--add">
+          <span class="folder__add-icon" aria-hidden="true">
+            <IconPlus size={28} stroke={1.75} />
           </span>
-          <span class="shelf-list__name">
+          <span class="folder__name folder__name--add">
             {data.shelves.length === 0
               ? 'Pair your first shelf'
               : 'Pair a new shelf'}
@@ -597,76 +622,201 @@
     margin-top: 1rem;
   }
 
-  .shelf-list {
+  /* ── Folder-style shelf grid ────────────────────────────────────────── */
+
+  .folder-grid {
     list-style: none;
     margin: 0;
     padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+    gap: 0.85rem;
+  }
+
+  .folder {
+    margin: 0;
+    /*
+      Grid items default to min-width: min-content, which for a long
+      unbroken shelf name (e.g. "MyVeryLongFridgeName") forces the
+      track wider than the configured 8.5rem minimum and breaks the
+      tile's square aspect ratio. Pin to 0 so the caption can clamp.
+    */
+    min-width: 0;
+  }
+
+  .folder__link {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .shelf-list__item {
-    margin: 0;
-  }
-
-  .shelf-list__link {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.85rem 1rem;
-    border-radius: var(--radius-md);
+    height: 100%;
+    aspect-ratio: 1 / 1;
+    padding: 0.75rem;
+    box-sizing: border-box;
+    min-width: 0;
+    overflow: hidden;
     background: var(--surface);
     border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     color: inherit;
     text-decoration: none;
     transition:
       background-color 0.15s ease,
-      transform 0.12s ease;
+      transform 0.12s ease,
+      box-shadow 0.15s ease;
   }
 
-  .shelf-list__link:hover,
-  .shelf-list__link:focus-visible {
+  .folder__link:hover,
+  .folder__link:focus-visible {
     background: var(--background);
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(51, 42, 38, 0.06);
   }
 
-  .shelf-list__name {
-    font-weight: 500;
-    overflow-wrap: anywhere;
+  /*
+    iOS-folder preview: a 3×2 grid of micro-cells, one per slot.
+    Filled cells use the matcha accent; empty cells render as a faint
+    dashed outline so the user can still see "this slot exists, it's
+    just empty" without competing visually with filled ones.
+  */
+  .folder__preview {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 0.3rem;
+    padding: 0.35rem;
+    background: var(--background);
+    border-radius: var(--radius-md);
+    margin-bottom: 0.55rem;
+  }
+
+  .folder__cell {
+    border-radius: var(--radius-xs);
+    border: 1px dashed rgba(51, 42, 38, 0.18);
+    background: transparent;
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+  }
+
+  /*
+    Filled cells are color-coded by urgency so the preview itself
+    becomes the status indicator — no separate text line needed.
+    Severity order: expired > urgent (expires ≤2d) > low (stock) > normal.
+  */
+  .folder__cell--normal {
+    background: var(--matcha);
+    border-color: var(--matcha-deep);
+    border-style: solid;
+  }
+
+  .folder__cell--low {
+    background: var(--warn);
+    border-color: var(--warn);
+    border-style: solid;
+  }
+
+  .folder__cell--urgent {
+    background: var(--warn);
+    border-color: var(--warn);
+    border-style: solid;
+  }
+
+  .folder__cell--expired {
+    background: var(--error, #c0392b);
+    border-color: var(--error, #c0392b);
+    border-style: solid;
+  }
+
+  .folder__caption {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
     min-width: 0;
   }
 
-  .shelf-list__link--add {
+  .folder__name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .folder__meta {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.74rem;
+    color: var(--text);
+    opacity: 0.7;
+    min-width: 0;
+  }
+
+  .folder__count {
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  /* Status dot at the far right of the meta line. */
+  .folder__meta :global(.sync-badge--dot-only) {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  /* ── Add-shelf tile ─────────────────────────────────────────────────── */
+
+  .folder__link--add {
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
     background: transparent;
     border-style: dashed;
     color: var(--text);
-    justify-content: flex-start;
-    gap: 0.6rem;
+    text-align: center;
   }
 
-  .shelf-list__link--add:hover,
-  .shelf-list__link--add:focus-visible {
+  .folder__link--add:hover,
+  .folder__link--add:focus-visible {
     background: var(--warn-soft);
   }
 
-  .shelf-list__link--add-hero {
+  .folder--add-hero .folder__link--add {
+    grid-column: 1 / -1;
     background: var(--warn-soft);
     border-style: solid;
     border-color: var(--warn);
-    padding: 1.25rem 1rem;
   }
 
-  .shelf-list__add-icon {
+  .folder--add-hero {
+    grid-column: 1 / -1;
+  }
+
+  .folder__add-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.6rem;
-    height: 1.6rem;
+    width: 2.4rem;
+    height: 2.4rem;
     border-radius: var(--radius-pill);
-    background: var(--warn);
-    color: #fff;
+    background: var(--text);
+    color: var(--background);
     flex-shrink: 0;
+  }
+
+  /*
+    Defensively force the stroke color on the icon SVG itself so it
+    doesn't get pulled toward the link's text color via inheritance
+    edge cases (e.g. inherit vs initial on certain Svelte renderers).
+  */
+  .folder__add-icon :global(svg) {
+    color: var(--background);
+    stroke: var(--background);
+  }
+
+  .folder__name--add {
+    white-space: normal;
+    font-weight: 500;
+    font-size: 0.88rem;
   }
 </style>

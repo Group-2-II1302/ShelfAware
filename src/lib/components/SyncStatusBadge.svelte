@@ -21,6 +21,7 @@
     lastSeen,
     hasItems = true,
     compact = false,
+    dotOnly = false,
   }: {
     lastSeen: string | Date | null | undefined
     /**
@@ -36,6 +37,12 @@
      * where the pill needs to coexist with other metadata.
      */
     compact?: boolean
+    /**
+     * Renders just the colored status dot (no label, no pill background),
+     * for very dense layouts like folder-style shelf tiles. The full
+     * status text is still exposed via aria-label and title.
+     */
+    dotOnly?: boolean
   } = $props()
 
   /*
@@ -64,19 +71,22 @@
 <span
   class="sync-badge sync-badge--{bucket}"
   class:sync-badge--compact={compact}
+  class:sync-badge--dot-only={dotOnly}
   role="status"
   aria-label={`Sync status: ${label}${lastSeen ? `, last seen ${relative}` : ''}`}
   title={
     lastSeen
-      ? `Last seen ${relative}`
+      ? `${label} · last seen ${relative}`
       : hasItems
-        ? 'Items present, but the device has not reported yet'
-        : 'No items on this shelf yet'
+        ? `${label} · items present, device hasn't reported yet`
+        : `${label} · no items on this shelf yet`
   }
 >
   <span class="sync-badge__dot" aria-hidden="true"></span>
-  <span class="sync-badge__label">{label}</span>
-  {#if !compact && lastSeen}
+  {#if !dotOnly}
+    <span class="sync-badge__label">{label}</span>
+  {/if}
+  {#if !compact && !dotOnly && lastSeen}
     <span class="sync-badge__time">· {relative}</span>
   {/if}
 </span>
@@ -99,6 +109,12 @@
   .sync-badge--compact {
     padding: 0.15rem 0.5rem;
     font-size: 0.72rem;
+  }
+
+  .sync-badge--dot-only {
+    padding: 0;
+    background: transparent;
+    gap: 0;
   }
 
   .sync-badge__dot {

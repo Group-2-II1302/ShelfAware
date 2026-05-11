@@ -12,6 +12,32 @@
   } from '$lib/shelfState'
   import ProductDetailsModal from '$lib/components/ProductDetailsModal.svelte'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
+  import { IconPencil, IconTrash } from '@tabler/icons-svelte'
+
+  const MAX_SHELF_NAME_LEN = 40
+  let editingName = $state(false)
+  let nameDraft = $state('')
+  let renameError = $state<string | null>(null)
+  let nameInputEl: HTMLInputElement | undefined
+
+  function startEditName() {
+    nameDraft = data.shelf.name
+    renameError = null
+    editingName = true
+    /*
+      Focus the input on the next microtask so the element exists.
+      Select-all so the user can immediately type a replacement.
+    */
+    queueMicrotask(() => {
+      nameInputEl?.focus()
+      nameInputEl?.select()
+    })
+  }
+
+  function cancelEditName() {
+    editingName = false
+    renameError = null
+  }
 
   let { data }: { data: PageData } = $props()
 
@@ -240,9 +266,81 @@
 
 <main class="shelf-page">
   <header class="shelf-header">
-    <h1 class="shelf-title">
-      {data.shelf.name}
-    </h1>
+    {#if editingName}
+      <form
+        method="POST"
+        action="?/renameShelf"
+        class="shelf-title-form"
+        use:enhance={() => {
+          /*
+            Optimistic-ish: clear the inline error on each submit. On
+            failure the server returns a `rename.error` we surface; on
+            success SvelteKit reruns the load and we close the editor.
+          */
+          renameError = null
+          return async ({ result, update }) => {
+            await update({ reset: false })
+            if (
+              result.type === 'failure' &&
+              result.data &&
+              typeof result.data === 'object' &&
+              'rename' in result.data
+            ) {
+              const r = (result.data as { rename?: { error?: string } }).rename
+              renameError = r?.error ?? 'Could not rename shelf.'
+            } else if (result.type === 'success') {
+              editingName = false
+            }
+          }
+        }}
+      >
+        <input
+          bind:this={nameInputEl}
+          bind:value={nameDraft}
+          name="name"
+          type="text"
+          class="shelf-title-input"
+          maxlength={MAX_SHELF_NAME_LEN}
+          required
+          aria-label="Shelf name"
+          aria-invalid={renameError ? 'true' : undefined}
+          onkeydown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              cancelEditName()
+            }
+          }}
+        />
+        <button
+          type="submit"
+          class="shelf-title-btn shelf-title-btn--primary"
+          disabled={nameDraft.trim().length === 0 || nameDraft.trim() === data.shelf.name}
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          class="shelf-title-btn"
+          onclick={cancelEditName}
+        >
+          Cancel
+        </button>
+      </form>
+      {#if renameError}
+        <p class="shelf-title-error" role="alert">{renameError}</p>
+      {/if}
+    {:else}
+      <button
+        type="button"
+        class="shelf-title shelf-title--editable"
+        onclick={startEditName}
+        aria-label="Rename shelf"
+      >
+        <span>{data.shelf.name}</span>
+        <IconPencil size={18} stroke={1.75} class="shelf-title__pencil" />
+      </button>
+    {/if}
+
     <SyncStatusBadge
       lastSeen={liveLastSyncedAt}
       hasItems={data.itemIds.length > 0}
@@ -384,6 +482,27 @@
       </ul>
     </section>
   {/each}
+
+  <section class="danger-zone" aria-labelledby="danger-zone-heading">
+    <h2 id="danger-zone-heading" class="danger-zone__title">Shelf settings</h2>
+    <form
+      method="POST"
+      action="?/deleteShelf"
+      onsubmit={(e) => {
+        const confirmed = confirm(
+          `Delete "${data.shelf.name}"? This will remove all items and weight history. This cannot be undone.`,
+        )
+        if (!confirmed) {
+          e.preventDefault()
+        }
+      }}
+    >
+      <button type="submit" class="danger-zone__btn">
+        <IconTrash size={18} stroke={1.75} />
+        Delete shelf
+      </button>
+    </form>
+  </section>
 </main>
 
 <ProductDetailsModal item={activeItem} onclose={closeDetails} />
@@ -407,6 +526,97 @@
     margin: 0;
     font-size: 1.5rem;
     line-height: 1.2;
+  }
+
+  .shelf-title--editable {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    text-align: left;
+  }
+
+  /*
+    Pencil hint stays muted until the user hovers/focuses the title;
+    it's just an affordance, not a separate action.
+  */
+  .shelf-title--editable :global(.shelf-title__pencil) {
+    opacity: 0.4;
+    transition: opacity 0.15s ease;
+  }
+
+  .shelf-title--editable:hover :global(.shelf-title__pencil),
+  .shelf-title--editable:focus-visible :global(.shelf-title__pencil) {
+    opacity: 1;
+  }
+
+  .shelf-title-form {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .shelf-title-input {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: inherit;
+    min-width: 0;
+    flex: 1 1 12rem;
+  }
+
+  .shelf-title-input[aria-invalid='true'] {
+    border-color: var(--error, #c0392b);
+  }
+
+  .shelf-title-btn {
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  .shelf-title-btn:hover:not(:disabled),
+  .shelf-title-btn:focus-visible:not(:disabled) {
+    background: var(--background);
+  }
+
+  .shelf-title-btn--primary {
+    background: var(--matcha);
+    border-color: var(--matcha-deep);
+    color: #fff;
+  }
+
+  .shelf-title-btn--primary:hover:not(:disabled),
+  .shelf-title-btn--primary:focus-visible:not(:disabled) {
+    background: var(--matcha-deep);
+  }
+
+  .shelf-title-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .shelf-title-error {
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    color: var(--error, #c0392b);
+    flex-basis: 100%;
   }
 
   .zone {
@@ -749,5 +959,43 @@
       max-width: 32rem;
       margin: 0 auto;
     }
+  }
+
+  /* ── Danger zone ─────────────────────────────────────────────────── */
+
+  .danger-zone {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .danger-zone__title {
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.6;
+    font-weight: 600;
+  }
+
+  .danger-zone__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.9rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--error, #c0392b);
+    background: transparent;
+    color: var(--error, #c0392b);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .danger-zone__btn:hover,
+  .danger-zone__btn:focus-visible {
+    background: var(--error, #c0392b);
+    color: #fff;
   }
 </style>
