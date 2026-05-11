@@ -6,6 +6,12 @@
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
   import Sparkline from '$lib/components/Sparkline.svelte'
   import {
+    formatDelta,
+    formatExpiredAgo,
+    formatGrams,
+    formatGramsPerDay,
+  } from '$lib/format'
+  import {
     IconMoodSmileBeam,
     IconPlus,
     IconTrendingDown,
@@ -246,36 +252,6 @@
     if (days === 0) return 'expires today'
     if (days === 1) return 'expires tomorrow'
     return `in ${days} days`
-  }
-
-  function formatDelta(pct: number): string {
-    /*
-      Clamp tiny noise to "≈ same" and cap huge swings (e.g. last
-      window was zero) at 999 so we don't render absurd numbers.
-    */
-    if (Math.abs(pct) < 1) return '≈ same'
-    const sign = pct > 0 ? '+' : ''
-    const value = Math.abs(pct) > 999 ? (pct > 0 ? 999 : -999) : Math.round(pct)
-    return `${sign}${value}%`
-  }
-
-  function formatGrams(g: number): string {
-    if (g >= 1000) return `${(g / 1000).toFixed(1)} kg`
-    return `${Math.round(g)} g`
-  }
-
-  function formatGramsPerDay(g: number): string {
-    if (g >= 1000) return `${(g / 1000).toFixed(2)} kg/day`
-    if (g >= 10) return `${Math.round(g)} g/day`
-    return `${g.toFixed(1)} g/day`
-  }
-
-  function formatExpiredAgo(expiryDate: string): string {
-    const expiry = new Date(expiryDate).getTime()
-    const days = Math.floor((Date.now() - expiry) / 86_400_000)
-    if (days <= 0) return 'today'
-    if (days === 1) return 'yesterday'
-    return `${days} days ago`
   }
 
   function formatLowStock(item: {

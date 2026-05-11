@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { enhance } from '$app/forms'
-  import { invalidate } from '$app/navigation'
+  import { invalidate, goto } from '$app/navigation'
+  import { page } from '$app/state'
   import type { PageData } from './$types'
   import { ZONES } from '$lib/shelf'
   import {
@@ -12,7 +13,22 @@
   } from '$lib/shelfState'
   import ProductDetailsModal from '$lib/components/ProductDetailsModal.svelte'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
-  import { IconPencil, IconTrash, IconArrowLeft } from '@tabler/icons-svelte'
+  import Sparkline from '$lib/components/Sparkline.svelte'
+  import {
+    formatDelta,
+    formatExpiredAgo,
+    formatGrams,
+    formatGramsPerDay,
+  } from '$lib/format'
+  import {
+    IconPencil,
+    IconTrash,
+    IconArrowLeft,
+    IconTrendingDown,
+    IconAlertTriangle,
+    IconLayoutGrid,
+    IconChartBar,
+  } from '@tabler/icons-svelte'
 
   const MAX_SHELF_NAME_LEN = 40
   let editingName = $state(false)
@@ -40,6 +56,80 @@
   }
 
   let { data }: { data: PageData } = $props()
+
+  /*
+    Items / Insights tabs. URL is the source of truth (`?tab=insights`)
+    so deep links from the dashboard's insight rows can target a
+    specific tab on the shelf page. localStorage is a fallback so the
+    user's last choice survives a fresh visit. Mirrors the dashboard
+    pattern intentionally.
+  */
+  const TAB_STORAGE_KEY = 'shelf:activeTab'
+  type ShelfTab = 'items' | 'insights'
+
+  function resolveInitialTab(): ShelfTab {
+    const fromUrl = page.url.searchParams.get('tab')
+    if (fromUrl === 'insights' || fromUrl === 'items') return fromUrl
+    /*
+      `localStorage` doesn't exist during SSR (and on some Node
+      polyfills it exists as a non-functional stub), so gate on
+      `window` instead of `typeof localStorage`. The initial SSR
+      pass falls back to 'items'; the client-side $effect below
+      reconciles with the stored value on hydration.
+    */
+    if (typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem(TAB_STORAGE_KEY)
+      if (stored === 'insights' || stored === 'items') return stored
+    }
+    return 'items'
+  }
+
+  let activeTab = $state<ShelfTab>(resolveInitialTab())
+
+  $effect(() => {
+    /*
+      Keep URL + storage synced with the user's pick. Replace state so
+      we don't pollute history with one entry per tab toggle.
+    */
+    const urlTab = page.url.searchParams.get('tab')
+    if (activeTab === 'items') {
+      if (urlTab) {
+        const url = new URL(page.url)
+        url.searchParams.delete('tab')
+        void goto(url.toString(), {
+          replaceState: true,
+          keepFocus: true,
+          noScroll: true,
+        })
+      }
+    } else if (urlTab !== activeTab) {
+      const url = new URL(page.url)
+      url.searchParams.set('tab', activeTab)
+      void goto(url.toString(), {
+        replaceState: true,
+        keepFocus: true,
+        noScroll: true,
+      })
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(TAB_STORAGE_KEY, activeTab)
+    }
+  })
+
+  function setRange(next: string) {
+    if (next === data.insights.range) return
+    const url = new URL(page.url)
+    if (next === '30d') {
+      url.searchParams.delete('range')
+    } else {
+      url.searchParams.set('range', next)
+    }
+    void goto(url.toString(), {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    })
+  }
 
   /*
     Tracks which slot is currently the leftmost-visible card in each
@@ -401,6 +491,37 @@
     />
   </header>
 
+  <div class="tabs" role="tablist" aria-label="Shelf view">
+    <button
+      type="button"
+      id="tab-items"
+      role="tab"
+      class="tabs__btn"
+      class:tabs__btn--active={activeTab === 'items'}
+      aria-selected={activeTab === 'items'}
+      aria-controls="panel-items"
+      onclick={() => (activeTab = 'items')}
+    >
+      <IconLayoutGrid size={16} stroke={1.75} />
+      <span>Items</span>
+    </button>
+    <button
+      type="button"
+      id="tab-insights"
+      role="tab"
+      class="tabs__btn"
+      class:tabs__btn--active={activeTab === 'insights'}
+      aria-selected={activeTab === 'insights'}
+      aria-controls="panel-insights"
+      onclick={() => (activeTab = 'insights')}
+    >
+      <IconChartBar size={16} stroke={1.75} />
+      <span>Insights</span>
+    </button>
+  </div>
+
+  {#if activeTab === 'items'}
+  <div role="tabpanel" id="panel-items" aria-labelledby="tab-items">
   {#each ZONES as zone (zone.id)}
     <section class="zone">
       <h2 class="zone-title">{zone.label}</h2>
@@ -579,6 +700,305 @@
       </button>
     </form>
   </section>
+  </div>
+  {:else}
+  {@const ins = data.insights}
+  {@const sparse = ins.daysOfHistory < ins.minDataDays}
+  <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
+    <div class="range-toggle" role="group" aria-label="Time range">
+      {#each ins.availableRanges as r (r)}
+        <button
+          type="button"
+          class="range-toggle__btn"
+          class:range-toggle__btn--active={ins.range === r}
+          aria-pressed={ins.range === r}
+          onclick={() => setRange(r)}
+        >
+          {r}
+        </button>
+      {/each}
+    </div>
+
+    {#if sparse}
+      <div class="insights__sparse">
+        <p class="insights__sparse-title">Insights are warming up</p>
+        <p class="insights__sparse-body">
+          Come back in a few days &mdash; once this shelf has built up a bit of
+          weight history, you'll see what you eat through fastest, what's
+          always running low, and what's been wasted.
+        </p>
+      </div>
+    {:else}
+      <section class="overview" aria-label="Period summary">
+        <div class="overview__metric">
+          <span class="overview__value">{formatGrams(ins.overview.consumedTotalG)}</span>
+          <span class="overview__label">consumed</span>
+          {#if ins.overview.delta.consumedPct !== null}
+            <span
+              class="overview__delta"
+              class:overview__delta--up={ins.overview.delta.consumedPct > 0}
+              class:overview__delta--down={ins.overview.delta.consumedPct < 0}
+              title="vs previous {ins.windowDays} days"
+            >
+              {formatDelta(ins.overview.delta.consumedPct)}
+            </span>
+          {/if}
+        </div>
+
+        <div class="overview__metric">
+          <span class="overview__value">{ins.overview.wastedItemCount}</span>
+          <span class="overview__label">
+            {ins.overview.wastedItemCount === 1 ? 'item wasted' : 'items wasted'}
+          </span>
+          {#if ins.overview.delta.wastedPct !== null}
+            <span
+              class="overview__delta"
+              class:overview__delta--good={ins.overview.delta.wastedPct < 0}
+              class:overview__delta--bad={ins.overview.delta.wastedPct > 0}
+              title="vs previous {ins.windowDays} days"
+            >
+              {formatDelta(ins.overview.delta.wastedPct)}
+            </span>
+          {/if}
+        </div>
+
+        <div class="overview__metric">
+          <span class="overview__value">{ins.overview.lowStockAlertCount}</span>
+          <span class="overview__label">low-stock alerts</span>
+          {#if ins.overview.delta.lowStockPct !== null}
+            <span
+              class="overview__delta"
+              class:overview__delta--good={ins.overview.delta.lowStockPct < 0}
+              class:overview__delta--bad={ins.overview.delta.lowStockPct > 0}
+              title="vs previous {ins.windowDays} days"
+            >
+              {formatDelta(ins.overview.delta.lowStockPct)}
+            </span>
+          {/if}
+        </div>
+      </section>
+    {/if}
+
+    <!-- Shelf utilization (per-shelf only) -->
+    <section class="insight-card" aria-labelledby="util-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--matcha" aria-hidden="true">
+          <IconLayoutGrid size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="util-heading" class="insight-card__title">Shelf utilization</h2>
+          <p class="insight-card__subtitle">
+            slots in use, last {ins.windowDays} days
+          </p>
+        </div>
+      </header>
+
+      {#if ins.utilization.series.length === 0}
+        <p class="insight-card__empty">
+          No activity logged on this shelf yet.
+        </p>
+      {:else}
+        <div class="util-row">
+          <div class="util-meta">
+            <p class="util-meta__primary">
+              <strong>{ins.utilization.currentFilled}</strong>
+              <span>/ {ins.utilization.totalSlots} slots in use now</span>
+            </p>
+            <p class="util-meta__secondary">
+              avg {ins.utilization.avgFilled.toFixed(1)} over window
+            </p>
+          </div>
+          <Sparkline
+            values={ins.utilization.series}
+            width={120}
+            height={32}
+            strokeWidth={1.5}
+            fill="var(--matcha-50, rgba(132, 169, 140, 0.18))"
+          />
+        </div>
+      {/if}
+    </section>
+
+    <!-- Wasted summary -->
+    <section class="insight-card" aria-labelledby="wasted-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--alert" aria-hidden="true">
+          <IconTrash size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="wasted-heading" class="insight-card__title">Wasted</h2>
+          <p class="insight-card__subtitle">last {ins.windowDays} days</p>
+        </div>
+      </header>
+
+      {#if sparse}
+        <div class="skeleton skeleton--summary"></div>
+      {:else if ins.wastedItemCount === 0}
+        <p class="insight-card__empty">
+          Nothing wasted in the last {ins.windowDays} days. Nice work.
+        </p>
+      {:else}
+        <p class="wasted-summary">
+          <span class="wasted-summary__count">{ins.wastedItemCount}</span>
+          {ins.wastedItemCount === 1 ? 'item' : 'items'} expired with weight
+          still on the scale &ndash;
+          {#if ins.wastedWeightApproximate}
+            about <strong>{formatGrams(ins.wastedTotalG)}</strong> on-scale
+            (includes container)
+          {:else}
+            roughly <strong>{formatGrams(ins.wastedTotalG)}</strong> of product
+          {/if}
+        </p>
+        <ul class="insight-list">
+          {#each ins.wasted as item (item.itemId)}
+            <li>
+              <a class="insight-row" href="#slot-{item.scaleIndex}">
+                {#if item.imageUrl}
+                  <img
+                    class="insight-row__img"
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                {:else}
+                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                    {item.name.charAt(0).toUpperCase()}
+                  </span>
+                {/if}
+                <div class="insight-row__body">
+                  <p class="insight-row__name">{item.name}</p>
+                  <p class="insight-row__meta">
+                    expired {formatExpiredAgo(item.expiryDate)} &middot;
+                    {#if item.weightIsApproximate}
+                      {formatGrams(item.estimatedRemainingG)} on scale
+                    {:else}
+                      ~{formatGrams(item.estimatedRemainingG)} left
+                    {/if}
+                  </p>
+                </div>
+              </a>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <!-- Fastest consumed -->
+    <section class="insight-card" aria-labelledby="fastest-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--matcha" aria-hidden="true">
+          <IconTrendingDown size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="fastest-heading" class="insight-card__title">Eat through fastest</h2>
+          <p class="insight-card__subtitle">
+            grams per day, last {ins.windowDays} days
+          </p>
+        </div>
+      </header>
+
+      {#if sparse || ins.fastestConsumed.length === 0}
+        {#if sparse}
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+        {:else}
+          <p class="insight-card__empty">
+            Not enough movement on this shelf yet to rank consumption.
+          </p>
+        {/if}
+      {:else}
+        <ul class="insight-list">
+          {#each ins.fastestConsumed as item (item.itemId)}
+            <li>
+              <a class="insight-row" href="#slot-{item.scaleIndex}">
+                {#if item.imageUrl}
+                  <img
+                    class="insight-row__img"
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                {:else}
+                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                    {item.name.charAt(0).toUpperCase()}
+                  </span>
+                {/if}
+                <div class="insight-row__body">
+                  <p class="insight-row__name">{item.name}</p>
+                  <p class="insight-row__meta">
+                    {formatGramsPerDay(item.gPerDay)} &middot; {Math.round(item.daysObserved)}d observed
+                  </p>
+                </div>
+                <Sparkline
+                  values={item.sparkline}
+                  width={84}
+                  height={28}
+                  strokeWidth={1.5}
+                />
+              </a>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <!-- Always running low -->
+    <section class="insight-card" aria-labelledby="low-heading">
+      <header class="insight-card__head">
+        <span class="insight-card__icon insight-card__icon--warn" aria-hidden="true">
+          <IconAlertTriangle size={20} stroke={1.75} />
+        </span>
+        <div>
+          <h2 id="low-heading" class="insight-card__title">Always running low</h2>
+          <p class="insight-card__subtitle">
+            triggered low-stock most often, last {ins.windowDays} days
+          </p>
+        </div>
+      </header>
+
+      {#if sparse || ins.alwaysRunningLow.length === 0}
+        {#if sparse}
+          <div class="skeleton skeleton--row"></div>
+          <div class="skeleton skeleton--row"></div>
+        {:else}
+          <p class="insight-card__empty">
+            Nothing has tripped a low-stock alert on this shelf in this window.
+          </p>
+        {/if}
+      {:else}
+        <ul class="insight-list">
+          {#each ins.alwaysRunningLow as item (item.itemId)}
+            <li>
+              <a class="insight-row" href="#slot-{item.scaleIndex}">
+                {#if item.imageUrl}
+                  <img
+                    class="insight-row__img"
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                {:else}
+                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                    {item.name.charAt(0).toUpperCase()}
+                  </span>
+                {/if}
+                <div class="insight-row__body">
+                  <p class="insight-row__name">{item.name}</p>
+                  <p class="insight-row__meta">
+                    {item.alertCount} {item.alertCount === 1 ? 'alert' : 'alerts'}
+                  </p>
+                </div>
+              </a>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  </div>
+  {/if}
 </main>
 
 <ProductDetailsModal item={activeItem} onclose={closeDetails} />
@@ -1213,5 +1633,381 @@
   .danger-zone__btn:focus-visible {
     background: var(--error, #c0392b);
     color: #fff;
+  }
+
+  /* ── Items / Insights tabs ─────────────────────────────────────────── */
+
+  .tabs {
+    display: inline-flex;
+    align-self: flex-start;
+    margin: 0.25rem 0 0.85rem;
+    padding: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    border: 1px solid var(--border);
+    gap: 0;
+  }
+
+  .tabs__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 0.35rem 0.8rem;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: background-color 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+  }
+
+  .tabs__btn:hover {
+    opacity: 0.9;
+  }
+
+  .tabs__btn--active {
+    background: var(--surface);
+    color: var(--matcha-deep);
+    opacity: 1;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  /* ── Insights panel ────────────────────────────────────────────────── */
+
+  .insights {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .range-toggle {
+    display: inline-flex;
+    align-self: flex-end;
+    padding: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    border: 1px solid var(--border);
+    gap: 0;
+  }
+
+  .range-toggle__btn {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.3rem 0.7rem;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: background-color 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+  }
+
+  .range-toggle__btn:hover {
+    opacity: 0.9;
+  }
+
+  .range-toggle__btn--active {
+    background: var(--surface);
+    color: var(--matcha-deep);
+    opacity: 1;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  .overview {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.85rem 1rem;
+  }
+
+  .overview__metric {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .overview__value {
+    font-size: 1.15rem;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .overview__label {
+    font-size: 0.72rem;
+    opacity: 0.65;
+    line-height: 1.2;
+    margin-top: 0.15rem;
+  }
+
+  .overview__delta {
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-top: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    opacity: 0.7;
+  }
+
+  .overview__delta--down {
+    color: var(--matcha-deep);
+  }
+  .overview__delta--up {
+    color: var(--text);
+  }
+  .overview__delta--good {
+    color: var(--matcha-deep);
+    background: var(--matcha-soft);
+    opacity: 1;
+  }
+  .overview__delta--bad {
+    color: var(--error, #c0392b);
+    background: rgba(192, 57, 43, 0.1);
+    opacity: 1;
+  }
+
+  .insights__sparse {
+    background: var(--matcha-soft);
+    border: 1px solid var(--matcha);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.1rem;
+  }
+
+  .insights__sparse-title {
+    margin: 0 0 0.35rem;
+    font-weight: 600;
+    color: var(--matcha-deep);
+  }
+
+  .insights__sparse-body {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    opacity: 0.85;
+  }
+
+  .insight-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.1rem;
+  }
+
+  .insight-card__head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .insight-card__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: var(--radius-md);
+    flex-shrink: 0;
+  }
+
+  .insight-card__icon--matcha {
+    background: var(--matcha-soft);
+    color: var(--matcha-deep);
+  }
+
+  .insight-card__icon--warn {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
+  .insight-card__icon--alert {
+    background: rgba(192, 57, 43, 0.1);
+    color: var(--error, #c0392b);
+  }
+
+  .insight-card__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .insight-card__subtitle {
+    margin: 0.15rem 0 0;
+    font-size: 0.78rem;
+    opacity: 0.65;
+  }
+
+  .insight-card__empty {
+    margin: 0;
+    font-size: 0.9rem;
+    opacity: 0.7;
+  }
+
+  .wasted-summary {
+    margin-bottom: 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    opacity: 0.85;
+  }
+
+  .wasted-summary__count {
+    font-weight: 700;
+    color: var(--error, #c0392b);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .insight-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .insight-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
+    padding: 0.35rem 0.4rem;
+    margin: -0.35rem -0.4rem;
+    border-radius: var(--radius-md);
+    transition: background-color 0.15s ease;
+  }
+
+  .insight-row:hover,
+  .insight-row:focus-visible {
+    background: var(--background);
+  }
+
+  .insight-row__img {
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: var(--radius-md);
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--background);
+  }
+
+  .insight-row__img--placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: var(--matcha-deep);
+  }
+
+  .insight-row__body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .insight-row__name {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 500;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .insight-row__meta {
+    margin: 0.1rem 0 0;
+    font-size: 0.78rem;
+    opacity: 0.7;
+  }
+
+  /*
+    Utilization card: header-style meta on the left, sparkline on the
+    right so the trend reads at a glance without scrolling.
+  */
+  .util-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+  }
+
+  .util-meta__primary {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.2;
+  }
+
+  .util-meta__primary strong {
+    font-size: 1.15rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--matcha-deep);
+  }
+
+  .util-meta__primary span {
+    opacity: 0.7;
+  }
+
+  .util-meta__secondary {
+    margin: 0.2rem 0 0;
+    font-size: 0.78rem;
+    opacity: 0.65;
+  }
+
+  .skeleton {
+    border-radius: var(--radius-md);
+    background: linear-gradient(
+      90deg,
+      var(--background) 0%,
+      rgba(0, 0, 0, 0.04) 50%,
+      var(--background) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.6s linear infinite;
+  }
+
+  .skeleton--summary {
+    height: 3rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .skeleton--row {
+    height: 2.4rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .skeleton--row:last-child {
+    margin-bottom: 0;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
   }
 </style>
