@@ -354,7 +354,7 @@
     width: 100%;
     max-height: 90vh;
     overflow-y: auto;
-    border-radius: 1rem 1rem 0 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     padding: 1.25rem 1.25rem 1.5rem;
     position: relative;
     box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.18);
@@ -370,7 +370,7 @@
 
     .modal-panel {
       max-width: 32rem;
-      border-radius: 1rem;
+      border-radius: var(--radius-xl);
       animation: panel-pop-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
       box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
     }
@@ -412,7 +412,7 @@
     flex: 0 0 5rem;
     width: 5rem;
     height: 5rem;
-    border-radius: 0.6rem;
+    border-radius: var(--radius-md);
     overflow: hidden;
     background: rgba(0, 0, 0, 0.04);
     display: flex;

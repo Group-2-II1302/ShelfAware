@@ -90,6 +90,30 @@
     if (invalidateTimer) clearTimeout(invalidateTimer)
     if (channel) channel.unsubscribe()
   })
+
+  function formatExpiry(days: number | null): string {
+    if (days === null) return ''
+    if (days < 0) return Math.abs(days) === 1 ? 'expired yesterday' : `expired ${Math.abs(days)}d ago`
+    if (days === 0) return 'expires today'
+    if (days === 1) return 'expires tomorrow'
+    return `in ${days} days`
+  }
+
+  function formatLowStock(item: {
+    currentWeightG: number | null
+    thresholdG: number | null
+  }): string {
+    if (item.currentWeightG === null) return 'low'
+    if (item.currentWeightG <= 0) return 'empty'
+    if (item.thresholdG && item.thresholdG > 0) {
+      const pct = Math.max(
+        0,
+        Math.min(100, Math.round((item.currentWeightG / item.thresholdG) * 100)),
+      )
+      return `${pct}% of threshold`
+    }
+    return `${Math.round(item.currentWeightG)} g`
+  }
 </script>
 
 <svelte:head>
@@ -98,37 +122,139 @@
 
 <main class="dashboard">
   <header class="dashboard__header">
-    <h1>welcome to shelfAware</h1>
-    <p class="dashboard__subtitle">your shelves</p>
+    <h1>welcome to <span class="brand">shelfAware</span></h1>
+    <p class="dashboard__subtitle">your kitchen at a glance</p>
   </header>
 
-  <ul class="shelf-list">
-    {#each data.shelves as shelf (shelf.id)}
-      <li class="shelf-list__item">
-        <a href="/shelves/{shelf.id}" class="shelf-list__link">
-          <span class="shelf-list__name">{shelf.name}</span>
-          <SyncStatusBadge
-            lastSeen={liveSyncBy[shelf.id]}
-            hasItems={shelf.hasItems}
-            compact
-          />
-        </a>
-      </li>
-    {/each}
-  </ul>
+  <section class="now" aria-labelledby="now-heading">
+    <h2 id="now-heading" class="section-title">Now</h2>
+
+    {#if data.actions.expiringTotal === 0 && data.actions.lowStockTotal === 0}
+      <div class="now__empty">
+        <span class="now__empty-mark" aria-hidden="true">✓</span>
+        <p>You're all set. Nothing expiring or running low.</p>
+      </div>
+    {:else}
+      <div class="stat-grid">
+        <article
+          class="stat-card stat-card--expiring"
+          class:stat-card--muted={data.actions.expiringTotal === 0}
+        >
+          <header class="stat-card__head">
+            <span class="stat-card__count">{data.actions.expiringTotal}</span>
+            <span class="stat-card__label">
+              {data.actions.expiringTotal === 1 ? 'item expiring' : 'items expiring'}
+            </span>
+          </header>
+          {#if data.actions.expiringTotal > 0}
+            <p class="stat-card__breakdown">
+              {#if data.actions.expiringBuckets.expired > 0}
+                <span class="chip chip--alert">{data.actions.expiringBuckets.expired} expired</span>
+              {/if}
+              {#if data.actions.expiringBuckets.today > 0}
+                <span class="chip chip--warn">{data.actions.expiringBuckets.today} today</span>
+              {/if}
+              {#if data.actions.expiringBuckets.soon > 0}
+                <span class="chip">{data.actions.expiringBuckets.soon} this week</span>
+              {/if}
+            </p>
+
+            <ul class="stat-card__list">
+              {#each data.actions.expiring as item (item.id)}
+                <li>
+                  <a
+                    class="stat-row"
+                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                  >
+                    <span class="stat-row__name">{item.name}</span>
+                    <span
+                      class="stat-row__meta"
+                      class:stat-row__meta--critical={(item.daysToExpiry ?? 0) < 0}
+                      class:stat-row__meta--warn={item.daysToExpiry === 0 ||
+                        item.daysToExpiry === 1}
+                    >
+                      {formatExpiry(item.daysToExpiry)}
+                    </span>
+                  </a>
+                </li>
+              {/each}
+              {#if data.actions.expiringTotal > data.actions.limit}
+                <li class="stat-card__more">
+                  + {data.actions.expiringTotal - data.actions.limit} more
+                </li>
+              {/if}
+            </ul>
+          {/if}
+        </article>
+
+        <article class="stat-card" class:stat-card--muted={data.actions.lowStockTotal === 0}>
+          <header class="stat-card__head">
+            <span class="stat-card__count">{data.actions.lowStockTotal}</span>
+            <span class="stat-card__label">
+              {data.actions.lowStockTotal === 1 ? 'item running low' : 'items running low'}
+            </span>
+          </header>
+          {#if data.actions.lowStockTotal > 0}
+            <ul class="stat-card__list">
+              {#each data.actions.lowStock as item (item.id)}
+                <li>
+                  <a
+                    class="stat-row"
+                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                  >
+                    <span class="stat-row__name">{item.name}</span>
+                    <span
+                      class="stat-row__meta"
+                      class:stat-row__meta--critical={item.currentWeightG !== null &&
+                        item.currentWeightG <= 0}
+                    >
+                      {formatLowStock(item)}
+                    </span>
+                  </a>
+                </li>
+              {/each}
+              {#if data.actions.lowStockTotal > data.actions.limit}
+                <li class="stat-card__more">
+                  + {data.actions.lowStockTotal - data.actions.limit} more
+                </li>
+              {/if}
+            </ul>
+          {/if}
+        </article>
+      </div>
+    {/if}
+  </section>
+
+  <section class="shelves" aria-labelledby="shelves-heading">
+    <h2 id="shelves-heading" class="section-title">Shelves</h2>
+    <ul class="shelf-list">
+      {#each data.shelves as shelf (shelf.id)}
+        <li class="shelf-list__item">
+          <a href="/shelves/{shelf.id}" class="shelf-list__link">
+            <span class="shelf-list__name">{shelf.name}</span>
+            <SyncStatusBadge
+              lastSeen={liveSyncBy[shelf.id]}
+              hasItems={shelf.hasItems}
+              compact
+            />
+          </a>
+        </li>
+      {/each}
+    </ul>
+  </section>
 </main>
 
 <style>
   .dashboard {
     width: 100%;
-    padding: 1rem;
+    padding: 2rem 1rem 8rem;
     box-sizing: border-box;
     max-width: 32rem;
     margin: 0 auto;
   }
 
   .dashboard__header {
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
   }
 
   .dashboard__header h1 {
@@ -137,10 +263,196 @@
     line-height: 1.2;
   }
 
+  .brand {
+    color: var(--matcha-deep);
+    font-weight: 600;
+  }
+
   .dashboard__subtitle {
     margin: 0.25rem 0 0;
     opacity: 0.7;
     font-size: 0.9rem;
+  }
+
+  .section-title {
+    margin: 0 0 0.6rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    color: var(--matcha-deep);
+  }
+
+  .now {
+    margin-bottom: 1.5rem;
+  }
+
+  .now__empty {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 1rem;
+    background: var(--matcha-soft);
+    border: 1px solid var(--matcha);
+    border-radius: var(--radius-md);
+  }
+
+  .now__empty-mark {
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    background: var(--matcha);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+
+  .now__empty p {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  @media (min-width: 480px) {
+    .stat-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .stat-card--expiring {
+    border-left-color: var(--warn);
+  }
+
+  .stat-card--muted {
+    border-left-color: var(--border);
+    opacity: 0.6;
+  }
+
+  .stat-card__head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .stat-card__count {
+    font-size: 1.8rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .stat-card__label {
+    font-size: 0.75rem;
+    opacity: 0.65;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+  }
+
+  .stat-card__breakdown {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .chip {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    border: 1px solid var(--border);
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+  }
+
+  .chip--alert {
+    border-color: var(--error);
+    color: var(--error);
+    background: #fff;
+  }
+
+  .chip--warn {
+    border-color: var(--warn);
+    color: var(--warn);
+    background: var(--warn-soft);
+  }
+
+  .stat-card__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .stat-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dashed transparent;
+    transition: border-color 0.15s ease;
+  }
+
+  .stat-row:hover,
+  .stat-row:focus-visible {
+    border-bottom-color: var(--border);
+  }
+
+  .stat-row__name {
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .stat-row__meta {
+    font-size: 0.7rem;
+    opacity: 0.6;
+    flex-shrink: 0;
+  }
+
+  .stat-row__meta--critical {
+    opacity: 1;
+    color: var(--error);
+  }
+
+  .stat-row__meta--warn {
+    opacity: 1;
+    color: var(--warn);
+  }
+
+  .stat-card__more {
+    font-size: 0.7rem;
+    opacity: 0.55;
+    padding-top: 0.25rem;
+  }
+
+  .shelves {
+    margin-top: 1rem;
   }
 
   .shelf-list {
@@ -162,8 +474,9 @@
     justify-content: space-between;
     gap: 0.75rem;
     padding: 0.85rem 1rem;
-    border-radius: 0.75rem;
-    background: var(--surface, rgba(0, 0, 0, 0.04));
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
     color: inherit;
     text-decoration: none;
     transition:
@@ -173,7 +486,7 @@
 
   .shelf-list__link:hover,
   .shelf-list__link:focus-visible {
-    background: var(--surface-hover, rgba(0, 0, 0, 0.07));
+    background: var(--background);
     transform: translateY(-1px);
   }
 

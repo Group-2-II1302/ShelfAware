@@ -254,7 +254,7 @@
   .inbox__back {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     width: 2.25rem;
     height: 2.25rem;
     font: inherit;
@@ -303,18 +303,18 @@
   .inbox-item {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-md);
     transition:
       background 0.15s,
       border-color 0.15s;
   }
 
   .inbox-item--unread {
-    border-left: 3px solid var(--accent);
+    border-left: 3px solid var(--matcha);
   }
 
   .inbox-item--unread .inbox-item__dot {
-    background: var(--accent);
+    background: var(--matcha);
   }
 
   .inbox-item--unread .inbox-item__message {

@@ -228,8 +228,8 @@
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 4px;
+    border-left: 3px solid var(--matcha);
+    border-radius: var(--radius-md);
     overflow: hidden;
     font-family: 'Cascadia Mono', monospace;
   }
@@ -246,12 +246,12 @@
 
   .toast__bar {
     height: 2px;
-    background: var(--accent);
+    background: var(--matcha);
     transform-origin: left center;
     animation-name: toast-countdown;
     animation-timing-function: linear;
     animation-fill-mode: forwards;
-    opacity: 0.55;
+    opacity: 0.85;
   }
 
   @keyframes toast-countdown {
@@ -292,7 +292,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    opacity: 0.65;
+    color: var(--matcha-deep);
   }
 
   .toast__body {

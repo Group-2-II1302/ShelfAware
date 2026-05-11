@@ -24,7 +24,7 @@
     background: #fee;
     color: #900;
     padding: 0.75rem 1rem;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     margin-bottom: 1rem;
     border: 1px solid #f99;
   }

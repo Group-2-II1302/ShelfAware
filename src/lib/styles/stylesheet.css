@@ -9,6 +9,23 @@
   --success-border: #b8d4b8;
   --accent: #332A26;
   --accent-contrast: #F4F1F0;
+
+  /* Brand + status palette layered on top of the warm-brown base. */
+  --matcha: #7a8b3f;
+  --matcha-soft: #e3e7d4;
+  --matcha-deep: #5d6a2f;
+  --warn: #c28a2f;
+  --warn-soft: #fbf3e1;
+  --info: #4b7b8a;
+
+  /* iOS-style rounded corner scale. Use these instead of raw px values
+     so the whole app can be re-tuned from one place. */
+  --radius-xs: 6px;    /* chips, small badges */
+  --radius-sm: 10px;   /* buttons, inputs */
+  --radius-md: 14px;   /* cards */
+  --radius-lg: 20px;   /* large containers, sheets */
+  --radius-xl: 28px;   /* hero / featured surfaces */
+  --radius-pill: 999px;
 }
 
 * {
@@ -22,22 +39,6 @@ body {
 
 .app-shell {
   display: contents;
-}
-
-.navbar {
-  display: flex;
-  padding: 10px;
-  align-items: center;
-}
-
-.navbar-brand {
-  margin: 0 auto;
-  font-family: monospace;
-}
-
-.navbar-profile {
-  display: flex;
-  align-items: center;
 }
 
 #menu {
@@ -92,7 +93,7 @@ body {
   max-width: 24rem;
   padding: 1.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
@@ -111,7 +112,7 @@ body {
   padding: 0.65rem 0.75rem;
   background: var(--success-bg);
   border: 1px solid var(--success-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.875rem;
 }
 
@@ -135,7 +136,7 @@ body {
 .input {
   padding: 0.5rem 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font: inherit;
 }
 
@@ -156,7 +157,7 @@ body {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--accent-contrast);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .btn-primary:disabled {
@@ -177,7 +178,7 @@ body {
   border: 1px solid #dadce0;
   background: #ffffff;
   color: #3c4043;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: background-color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
@@ -228,7 +229,7 @@ body {
   cursor: pointer;
   padding: 0.45rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
 }
 

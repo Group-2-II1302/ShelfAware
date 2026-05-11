@@ -254,7 +254,7 @@
       <h2 class="zone-title">{zone.label}</h2>
       <ul class="slot-list">
         {#each slotsForZone(zone.slotIndices) as slot (slot.scale_index)}
-          <li class="slot">
+          <li class="slot" id="slot-{slot.scale_index}">
             {#if slot.status === 'filled'}
               <article class="slot-card slot-card--filled">
                 <!--
@@ -447,7 +447,7 @@
     width: 100%;
     background: var(--surface);
     border: 1px solid transparent;
-    border-radius: 1rem;
+    border-radius: var(--radius-lg);
     padding: 1rem;
     min-height: 6rem;
     box-sizing: border-box;
@@ -488,7 +488,7 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    border-radius: 0.6rem;
+    border-radius: var(--radius-md);
   }
 
   .slot-card__body:focus-visible {
@@ -528,7 +528,7 @@
     align-items: center;
     justify-content: center;
     padding: 0 0.75rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-sm);
     border: 1px solid transparent;
     font-size: 0.85rem;
     font-weight: 500;
@@ -564,7 +564,7 @@
     align-items: center;
     justify-content: center;
     padding: 0;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-sm);
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
@@ -615,7 +615,7 @@
     width: 100%;
     aspect-ratio: 1 / 1;
     margin: 0.25rem 0 0.5rem;
-    border-radius: 0.6rem;
+    border-radius: var(--radius-md);
     overflow: hidden;
     background: rgba(0, 0, 0, 0.04);
     display: flex;
