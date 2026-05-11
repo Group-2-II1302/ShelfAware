@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { invalidate } from '$app/navigation'
+  import { invalidate, goto, replaceState } from '$app/navigation'
   import { page } from '$app/state'
-  import { replaceState } from '$app/navigation'
   import type { PageData } from './$types'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
   import Sparkline from '$lib/components/Sparkline.svelte'
@@ -21,10 +20,42 @@
     bookmarks survive. "today" is the default and elides the query
     param entirely (no ?tab=today noise in the address bar).
   */
+  const TAB_STORAGE_KEY = 'shelfaware.dashboard.tab'
   type Tab = 'today' | 'insights'
-  let activeTab = $state<Tab>(
-    page.url.searchParams.get('tab') === 'insights' ? 'insights' : 'today',
-  )
+
+  function resolveInitialTab(): Tab {
+    /*
+      Resolution priority:
+        1. ?tab=... in the URL (explicit user intent, deep-link from
+           elsewhere in the app, or a back/refresh on the same view)
+        2. localStorage (last-used tab on this device)
+        3. 'today' default
+      SSR has no localStorage, so we treat the initial tab as 'today'
+      there to avoid layout flashes; the effect below upgrades it
+      once the client has hydrated.
+    */
+    const param = page.url.searchParams.get('tab')
+    if (param === 'insights' || param === 'today') return param
+    return 'today'
+  }
+
+  let activeTab = $state<Tab>(resolveInitialTab())
+
+  onMount(() => {
+    /*
+      Apply localStorage fallback after hydration. Only kicks in when
+      the URL didn't carry an explicit ?tab — otherwise the URL wins.
+    */
+    if (page.url.searchParams.has('tab')) return
+    try {
+      const stored = localStorage.getItem(TAB_STORAGE_KEY)
+      if (stored === 'insights' || stored === 'today') {
+        if (stored !== activeTab) activeTab = stored
+      }
+    } catch {
+      /* localStorage can throw in privacy modes; fall back silently. */
+    }
+  })
 
   function setTab(next: Tab) {
     if (next === activeTab) return
@@ -36,6 +67,32 @@
       url.searchParams.set('tab', next)
     }
     replaceState(url.toString(), page.state)
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, next)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /*
+    Switch the insights time range. We use goto() with replaceState
+    + keepFocus so the URL updates, the server load re-runs against
+    the new ?range value, but we don't push a new history entry per
+    click (the user shouldn't have to mash Back to undo a toggle).
+  */
+  function setRange(next: string) {
+    if (next === data.insights.range) return
+    const url = new URL(page.url)
+    if (next === '30d') {
+      url.searchParams.delete('range')
+    } else {
+      url.searchParams.set('range', next)
+    }
+    void goto(url.toString(), {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    })
   }
 
   /*
@@ -191,6 +248,17 @@
     return `in ${days} days`
   }
 
+  function formatDelta(pct: number): string {
+    /*
+      Clamp tiny noise to "≈ same" and cap huge swings (e.g. last
+      window was zero) at 999 so we don't render absurd numbers.
+    */
+    if (Math.abs(pct) < 1) return '≈ same'
+    const sign = pct > 0 ? '+' : ''
+    const value = Math.abs(pct) > 999 ? (pct > 0 ? 999 : -999) : Math.round(pct)
+    return `${sign}${value}%`
+  }
+
   function formatGrams(g: number): string {
     if (g >= 1000) return `${(g / 1000).toFixed(1)} kg`
     return `${Math.round(g)} g`
@@ -246,7 +314,7 @@
     </p>
   </header>
 
-  <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+  <div class="tabs" role="tablist" aria-label="Dashboard sections">
     <button
       type="button"
       role="tab"
@@ -271,7 +339,7 @@
     >
       Insights
     </button>
-  </nav>
+  </div>
 
   {#if activeTab === 'today'}
   <div role="tabpanel" id="panel-today" aria-labelledby="tab-today">
@@ -448,6 +516,20 @@
   {@const ins = data.insights}
   {@const sparse = ins.daysOfHistory < ins.minDataDays}
   <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
+    <div class="range-toggle" role="group" aria-label="Time range">
+      {#each ins.availableRanges as r (r)}
+        <button
+          type="button"
+          class="range-toggle__btn"
+          class:range-toggle__btn--active={ins.range === r}
+          aria-pressed={ins.range === r}
+          onclick={() => setRange(r)}
+        >
+          {r}
+        </button>
+      {/each}
+    </div>
+
     {#if sparse}
       <div class="insights__sparse">
         <p class="insights__sparse-title">Insights are warming up</p>
@@ -457,6 +539,55 @@
           fastest, what's always running low, and what's been wasted.
         </p>
       </div>
+    {:else}
+      <section class="overview" aria-label="Period summary">
+        <div class="overview__metric">
+          <span class="overview__value">{formatGrams(ins.overview.consumedTotalG)}</span>
+          <span class="overview__label">consumed</span>
+          {#if ins.overview.delta.consumedPct !== null}
+            <span
+              class="overview__delta"
+              class:overview__delta--up={ins.overview.delta.consumedPct > 0}
+              class:overview__delta--down={ins.overview.delta.consumedPct < 0}
+              title="vs previous {ins.windowDays} days"
+            >
+              {formatDelta(ins.overview.delta.consumedPct)}
+            </span>
+          {/if}
+        </div>
+
+        <div class="overview__metric">
+          <span class="overview__value">{ins.overview.wastedItemCount}</span>
+          <span class="overview__label">
+            {ins.overview.wastedItemCount === 1 ? 'item wasted' : 'items wasted'}
+          </span>
+          {#if ins.overview.delta.wastedPct !== null}
+            <span
+              class="overview__delta"
+              class:overview__delta--good={ins.overview.delta.wastedPct < 0}
+              class:overview__delta--bad={ins.overview.delta.wastedPct > 0}
+              title="vs previous {ins.windowDays} days"
+            >
+              {formatDelta(ins.overview.delta.wastedPct)}
+            </span>
+          {/if}
+        </div>
+
+        <div class="overview__metric">
+          <span class="overview__value">{ins.overview.lowStockAlertCount}</span>
+          <span class="overview__label">low-stock alerts</span>
+          {#if ins.overview.delta.lowStockPct !== null}
+            <span
+              class="overview__delta"
+              class:overview__delta--good={ins.overview.delta.lowStockPct < 0}
+              class:overview__delta--bad={ins.overview.delta.lowStockPct > 0}
+              title="vs previous {ins.windowDays} days"
+            >
+              {formatDelta(ins.overview.delta.lowStockPct)}
+            </span>
+          {/if}
+        </div>
+      </section>
     {/if}
 
     <!-- Wasted summary card -->
@@ -491,31 +622,36 @@
         </p>
         <ul class="insight-list">
           {#each ins.wasted as item (item.itemId)}
-            <li class="insight-row">
-              {#if item.imageUrl}
-                <img
-                  class="insight-row__img"
-                  src={item.imageUrl}
-                  alt=""
-                  loading="lazy"
-                  referrerpolicy="no-referrer"
-                />
-              {:else}
-                <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
-                  {item.name.charAt(0).toUpperCase()}
-                </span>
-              {/if}
-              <div class="insight-row__body">
-                <p class="insight-row__name">{item.name}</p>
-                <p class="insight-row__meta">
-                  expired {formatExpiredAgo(item.expiryDate)} ·
-                  {#if item.weightIsApproximate}
-                    {formatGrams(item.estimatedRemainingG)} on scale
-                  {:else}
-                    ~{formatGrams(item.estimatedRemainingG)} left
-                  {/if}
-                </p>
-              </div>
+            <li>
+              <a
+                class="insight-row"
+                href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+              >
+                {#if item.imageUrl}
+                  <img
+                    class="insight-row__img"
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                {:else}
+                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                    {item.name.charAt(0).toUpperCase()}
+                  </span>
+                {/if}
+                <div class="insight-row__body">
+                  <p class="insight-row__name">{item.name}</p>
+                  <p class="insight-row__meta">
+                    expired {formatExpiredAgo(item.expiryDate)} ·
+                    {#if item.weightIsApproximate}
+                      {formatGrams(item.estimatedRemainingG)} on scale
+                    {:else}
+                      ~{formatGrams(item.estimatedRemainingG)} left
+                    {/if}
+                  </p>
+                </div>
+              </a>
             </li>
           {/each}
         </ul>
@@ -547,32 +683,37 @@
       {:else}
         <ul class="insight-list">
           {#each ins.fastestConsumed as item (item.itemId)}
-            <li class="insight-row">
-              {#if item.imageUrl}
-                <img
-                  class="insight-row__img"
-                  src={item.imageUrl}
-                  alt=""
-                  loading="lazy"
-                  referrerpolicy="no-referrer"
+            <li>
+              <a
+                class="insight-row"
+                href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+              >
+                {#if item.imageUrl}
+                  <img
+                    class="insight-row__img"
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                {:else}
+                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                    {item.name.charAt(0).toUpperCase()}
+                  </span>
+                {/if}
+                <div class="insight-row__body">
+                  <p class="insight-row__name">{item.name}</p>
+                  <p class="insight-row__meta">
+                    {formatGramsPerDay(item.gPerDay)} · {Math.round(item.daysObserved)}d observed
+                  </p>
+                </div>
+                <Sparkline
+                  values={item.sparkline}
+                  width={84}
+                  height={28}
+                  strokeWidth={1.5}
                 />
-              {:else}
-                <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
-                  {item.name.charAt(0).toUpperCase()}
-                </span>
-              {/if}
-              <div class="insight-row__body">
-                <p class="insight-row__name">{item.name}</p>
-                <p class="insight-row__meta">
-                  {formatGramsPerDay(item.gPerDay)} · {Math.round(item.daysObserved)}d observed
-                </p>
-              </div>
-              <Sparkline
-                values={item.sparkline}
-                width={84}
-                height={28}
-                strokeWidth={1.5}
-              />
+              </a>
             </li>
           {/each}
         </ul>
@@ -605,26 +746,31 @@
       {:else}
         <ul class="insight-list">
           {#each ins.alwaysRunningLow as item (item.itemId)}
-            <li class="insight-row">
-              {#if item.imageUrl}
-                <img
-                  class="insight-row__img"
-                  src={item.imageUrl}
-                  alt=""
-                  loading="lazy"
-                  referrerpolicy="no-referrer"
-                />
-              {:else}
-                <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
-                  {item.name.charAt(0).toUpperCase()}
-                </span>
-              {/if}
-              <div class="insight-row__body">
-                <p class="insight-row__name">{item.name}</p>
-                <p class="insight-row__meta">
-                  {item.alertCount} {item.alertCount === 1 ? 'alert' : 'alerts'}
-                </p>
-              </div>
+            <li>
+              <a
+                class="insight-row"
+                href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+              >
+                {#if item.imageUrl}
+                  <img
+                    class="insight-row__img"
+                    src={item.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                {:else}
+                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
+                    {item.name.charAt(0).toUpperCase()}
+                  </span>
+                {/if}
+                <div class="insight-row__body">
+                  <p class="insight-row__name">{item.name}</p>
+                  <p class="insight-row__meta">
+                    {item.alertCount} {item.alertCount === 1 ? 'alert' : 'alerts'}
+                  </p>
+                </div>
+              </a>
             </li>
           {/each}
         </ul>
@@ -691,6 +837,113 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /* ── Range toggle ────────────────────────────────────────────────── */
+
+  .range-toggle {
+    display: inline-flex;
+    align-self: flex-end;
+    padding: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    border: 1px solid var(--border);
+    gap: 0;
+  }
+
+  .range-toggle__btn {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.3rem 0.7rem;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: background-color 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+  }
+
+  .range-toggle__btn:hover {
+    opacity: 0.9;
+  }
+
+  .range-toggle__btn--active {
+    background: var(--surface);
+    color: var(--matcha-deep);
+    opacity: 1;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  /* ── Overview row ────────────────────────────────────────────────── */
+
+  .overview {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.85rem 1rem;
+  }
+
+  .overview__metric {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .overview__value {
+    font-size: 1.15rem;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .overview__label {
+    font-size: 0.72rem;
+    opacity: 0.65;
+    line-height: 1.2;
+    margin-top: 0.15rem;
+  }
+
+  .overview__delta {
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-top: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    opacity: 0.7;
+  }
+
+  /*
+    Two color schemes:
+      - up/down (neutral): consumed went up vs prev (more or less is
+        neither good nor bad — just informative)
+      - good/bad (judged): wasted/low-stock down = good, up = bad
+  */
+  .overview__delta--down {
+    color: var(--matcha-deep);
+  }
+  .overview__delta--up {
+    color: var(--text);
+  }
+  .overview__delta--good {
+    color: var(--matcha-deep);
+    background: var(--matcha-soft);
+    opacity: 1;
+  }
+  .overview__delta--bad {
+    color: var(--error, #c0392b);
+    background: rgba(192, 57, 43, 0.1);
+    opacity: 1;
   }
 
   .insights__sparse {
@@ -802,6 +1055,17 @@
     align-items: center;
     gap: 0.7rem;
     min-width: 0;
+    color: inherit;
+    text-decoration: none;
+    padding: 0.35rem 0.4rem;
+    margin: -0.35rem -0.4rem;
+    border-radius: var(--radius-md);
+    transition: background-color 0.15s ease;
+  }
+
+  .insight-row:hover,
+  .insight-row:focus-visible {
+    background: var(--background);
   }
 
   .insight-row__img {
