@@ -113,6 +113,6 @@ export const actions: Actions = {
       });
     }
 
-  return { renameSuccess: true as const, renameShelfId: shelfId };
+    return { renameSuccess: true as const, renameShelfId: shelfId };
   },
 };
