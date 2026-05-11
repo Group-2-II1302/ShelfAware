@@ -12,7 +12,7 @@
   } from '$lib/shelfState'
   import ProductDetailsModal from '$lib/components/ProductDetailsModal.svelte'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
-  import { IconPencil, IconTrash } from '@tabler/icons-svelte'
+  import { IconPencil, IconTrash, IconArrowLeft } from '@tabler/icons-svelte'
 
   const MAX_SHELF_NAME_LEN = 40
   let editingName = $state(false)
@@ -40,6 +40,55 @@
   }
 
   let { data }: { data: PageData } = $props()
+
+  /*
+    Tracks which slot is currently the leftmost-visible card in each
+    zone's mobile carousel, keyed by zone id. Powers the page-indicator
+    dots underneath each slot list. Untracked on desktop where the
+    carousel collapses to a regular grid — every slot is visible at
+    once, and the dots are hidden via CSS.
+  */
+  let visibleSlotByZone = $state<Record<string, number>>({})
+
+  function trackVisibleSlot(node: HTMLElement, zoneId: string) {
+    /*
+      IntersectionObserver with the carousel as root tells us which
+      slot is most centered. We pick the entry with the largest
+      intersection ratio and map it back to its DOM index via the
+      slot's position in the list. Cheap, accurate, and doesn't
+      need a scroll listener firing per pixel.
+    */
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let bestIdx = visibleSlotByZone[zoneId] ?? 0
+        let bestRatio = 0
+        for (const entry of entries) {
+          if (entry.intersectionRatio > bestRatio) {
+            bestRatio = entry.intersectionRatio
+            const idx = Array.prototype.indexOf.call(
+              node.children,
+              entry.target,
+            )
+            if (idx >= 0) bestIdx = idx
+          }
+        }
+        if (visibleSlotByZone[zoneId] !== bestIdx) {
+          visibleSlotByZone = { ...visibleSlotByZone, [zoneId]: bestIdx }
+        }
+      },
+      { root: node, threshold: [0.5, 0.75, 1] },
+    )
+
+    for (const child of Array.from(node.children)) {
+      observer.observe(child)
+    }
+
+    return {
+      destroy() {
+        observer.disconnect()
+      },
+    }
+  }
 
   /*
     Live-updating sync timestamp. Server load gives us the initial
@@ -265,6 +314,11 @@
 </svelte:head>
 
 <main class="shelf-page">
+  <a href="/" class="back-link" aria-label="Back to dashboard">
+    <IconArrowLeft size={18} stroke={1.75} />
+    <span>Dashboard</span>
+  </a>
+
   <header class="shelf-header">
     {#if editingName}
       <form
@@ -350,7 +404,7 @@
   {#each ZONES as zone (zone.id)}
     <section class="zone">
       <h2 class="zone-title">{zone.label}</h2>
-      <ul class="slot-list">
+      <ul class="slot-list" use:trackVisibleSlot={zone.id}>
         {#each slotsForZone(zone.slotIndices) as slot (slot.scale_index)}
           <li class="slot" id="slot-{slot.scale_index}">
             {#if slot.status === 'filled'}
@@ -391,13 +445,23 @@
                     {slot.item.product_name ?? slot.item.barcode}
                   </h3>
                   <p class="slot-state slot-state--{stateModifier(slot.item.state)}">
-                    <span class="slot-state__dot" aria-hidden="true"></span>
-                    <span class="slot-state__label">
-                      {stateLabel(slot.item.state)}
-                    </span>
-                    {#if formatWeight(slot.item.current_weight_g)}
-                      <span class="slot-weight">
-                        · {formatWeight(slot.item.current_weight_g)}
+                    {#if slot.item.state !== null}
+                      <span
+                        class="slot-state__bar"
+                        role="progressbar"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow={Math.round(slot.item.state * 100)}
+                        aria-label="Fullness: {stateLabel(slot.item.state)}"
+                      >
+                        <span
+                          class="slot-state__bar-fill"
+                          style="width: {Math.max(0, Math.min(100, slot.item.state * 100))}%"
+                        ></span>
+                      </span>
+                    {:else}
+                      <span class="slot-state__label">
+                        {stateLabel(slot.item.state)}
                       </span>
                     {/if}
                   </p>
@@ -480,6 +544,18 @@
           </li>
         {/each}
       </ul>
+      <div
+        class="scroll-dots"
+        role="presentation"
+        aria-hidden="true"
+      >
+        {#each slotsForZone(zone.slotIndices) as slot, i (slot.scale_index)}
+          <span
+            class="scroll-dot"
+            class:scroll-dot--active={(visibleSlotByZone[zone.id] ?? 0) === i}
+          ></span>
+        {/each}
+      </div>
     </section>
   {/each}
 
@@ -510,8 +586,33 @@
 <style>
   .shelf-page {
     width: 100%;
-    padding: 1rem;
+    /*
+      Bottom padding clears the fixed bottom-nav island so the last
+      slot card / danger zone button never sits under it, without
+      leaving a big scroll-past void of empty space.
+    */
+    padding: 1rem 1rem 5rem;
     box-sizing: border-box;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.85rem;
+    padding: 0.3rem 0.55rem 0.3rem 0.4rem;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.85rem;
+    opacity: 0.65;
+    border-radius: var(--radius-sm);
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+  }
+
+  .back-link:hover,
+  .back-link:focus-visible {
+    opacity: 1;
+    background: var(--background);
   }
 
   .shelf-header {
@@ -640,9 +741,58 @@
     gap: 0.75rem;
   }
 
+  /*
+    On narrow viewports we drop the grid in favour of a horizontal
+    scroll-snap carousel per zone. This mirrors a physical shelf
+    visually (slot 0/1/2 sit side-by-side, just like the scales)
+    and keeps the page compact compared to stacking three full-width
+    cards vertically. Bleed the carousel into the page padding so
+    cards can scroll edge-to-edge without a hard left margin.
+  */
+  /*
+    Page-indicator dots beneath each carousel. Hidden on desktop
+    where the grid layout renders every slot at once.
+  */
+  .scroll-dots {
+    display: none;
+  }
+
   @media (max-width: 480px) {
     .slot-list {
-      grid-template-columns: minmax(0, 1fr);
+      display: flex;
+      gap: 0.65rem;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      scroll-padding-left: 1rem;
+      padding: 0.25rem 1rem;
+      margin: 0 -1rem;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .slot-list::-webkit-scrollbar {
+      display: none;
+    }
+
+    .scroll-dots {
+      display: flex;
+      justify-content: center;
+      gap: 0.35rem;
+      margin-top: 0.6rem;
+    }
+
+    .scroll-dot {
+      width: 0.4rem;
+      height: 0.4rem;
+      border-radius: 50%;
+      background: var(--text);
+      opacity: 0.18;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .scroll-dot--active {
+      opacity: 0.7;
+      transform: scale(1.15);
     }
   }
 
@@ -677,6 +827,51 @@
     }
     100% {
       box-shadow: 0 0 0 0 rgba(122, 139, 63, 0);
+    }
+  }
+
+  /*
+    Slot sizing inside the mobile carousel. Pinned width keeps the
+    rhythm consistent regardless of caption length, and scroll-snap
+    aligns each card to the left edge so the user always lands on a
+    clean slot boundary instead of mid-card.
+  */
+  @media (max-width: 480px) {
+    .slot {
+      flex: 0 0 11rem;
+      scroll-snap-align: start;
+    }
+
+    /*
+      Compact slot card on mobile: smaller padding, smaller image,
+      smaller text. The carousel makes vertical space precious, so
+      every card has to earn its height.
+    */
+    .slot-card {
+      padding: 0.7rem;
+      min-height: 0;
+    }
+    .slot-index {
+      font-size: 0.68rem;
+      margin-bottom: 0.15rem;
+    }
+    .slot-image {
+      margin: 0.1rem 0 0.4rem;
+    }
+    .slot-image__placeholder {
+      font-size: 1.4rem;
+    }
+    .slot-product {
+      font-size: 0.88rem;
+      line-height: 1.25;
+    }
+    .slot-state {
+      margin-top: 0.35rem;
+      font-size: 0.74rem;
+    }
+    .slot-actions {
+      padding-top: 0.55rem;
+      gap: 0.35rem;
     }
   }
 
@@ -885,6 +1080,17 @@
     font-size: 1rem;
     line-height: 1.3;
     overflow-wrap: anywhere;
+    /*
+      Clamp long product names to 2 lines so every slot card has a
+      predictable height regardless of how chatty OpenFoodFacts is.
+      The full name is still available in the details modal that
+      opens when the card is tapped.
+    */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .slot-state {
@@ -897,12 +1103,27 @@
     flex-wrap: wrap;
   }
 
-  .slot-state__dot {
-    width: 0.55rem;
-    height: 0.55rem;
-    border-radius: 50%;
-    flex-shrink: 0;
+  /*
+    Thin fullness bar that replaces the old colored dot. Inherits
+    --state-color from the parent .slot-state--<bucket> modifier so
+    a single class swap recolors the entire indicator. Hidden when
+    state is null (uncalibrated) — see the {#if} in the markup.
+  */
+  .slot-state__bar {
+    flex: 1 1 100%;
+    height: 4px;
+    border-radius: var(--radius-pill);
+    background: var(--background);
+    overflow: hidden;
+    display: inline-block;
+  }
+
+  .slot-state__bar-fill {
+    display: block;
+    height: 100%;
     background: var(--state-color, currentColor);
+    border-radius: inherit;
+    transition: width 0.4s ease, background-color 0.3s ease;
   }
 
   .slot-state__label {
@@ -934,11 +1155,6 @@
     --state-color: #888;
     font-style: italic;
     opacity: 0.85;
-  }
-
-  .slot-weight {
-    opacity: 0.7;
-    color: var(--text);
   }
 
   .slot-expiry {
