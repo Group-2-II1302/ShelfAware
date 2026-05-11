@@ -4,6 +4,7 @@
   import { page } from '$app/state'
   import type { PageData } from './$types'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
+  import { enhance } from '$app/forms'
   import Sparkline from '$lib/components/Sparkline.svelte'
   import {
     formatDelta,
@@ -14,6 +15,7 @@
   import {
     IconMoodSmileBeam,
     IconPlus,
+    IconCheck,
     IconTrendingDown,
     IconAlertTriangle,
     IconTrash,
@@ -55,6 +57,19 @@
   */
   let expandedExpiring = $state(false)
   let expandedLowStock = $state(false)
+
+  /*
+    Optimistic "added to shopping list" markers. Keyed by
+    "<itemId>:<reason>" so the same item can be added under different
+    reasons (e.g. expiring vs low_stock) without one flipping the
+    other's UI state. Cleared on the next server load.
+  */
+  let addedToList = $state(new Set<string>())
+  $effect(() => {
+    data.actions.expiring
+    data.actions.lowStock
+    addedToList = new Set()
+  })
 
   onMount(() => {
     /*
@@ -364,7 +379,9 @@
 
             <ul class="stat-card__list">
               {#each (expandedExpiring ? data.actions.expiring : data.actions.expiring.slice(0, data.actions.limit)) as item (item.id)}
-                <li>
+                {@const reason = (item.daysToExpiry ?? 0) < 0 ? 'expired' : 'expiring'}
+                {@const key = item.id + ':' + reason}
+                <li class="stat-row-wrap">
                   <a
                     class="stat-row"
                     href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
@@ -379,6 +396,35 @@
                       {formatExpiry(item.daysToExpiry)}
                     </span>
                   </a>
+                  <form
+                    method="POST"
+                    action="/shopping?/addFromSource"
+                    use:enhance={() => {
+                      addedToList = new Set([...addedToList, key])
+                      return async ({ update }) => {
+                        await update({ reset: false })
+                      }
+                    }}
+                  >
+                    <input type="hidden" name="source_item_id" value={item.id} />
+                    <input type="hidden" name="source_reason" value={reason} />
+                    <input type="hidden" name="name" value={item.name} />
+                    <input type="hidden" name="shelf_id" value={item.shelfId} />
+                    <button
+                      type="submit"
+                      class="stat-row__add"
+                      class:stat-row__add--added={addedToList.has(key)}
+                      disabled={addedToList.has(key)}
+                      aria-label="Add {item.name} to shopping list"
+                      title="Add to shopping list"
+                    >
+                      {#if addedToList.has(key)}
+                        <IconCheck size={14} stroke={2} />
+                      {:else}
+                        <IconPlus size={14} stroke={2} />
+                      {/if}
+                    </button>
+                  </form>
                 </li>
               {/each}
               {#if data.actions.expiring.length > data.actions.limit}
@@ -418,7 +464,8 @@
 
             <ul class="stat-card__list">
               {#each (expandedLowStock ? data.actions.lowStock : data.actions.lowStock.slice(0, data.actions.limit)) as item (item.id)}
-                <li>
+                {@const key = item.id + ':low_stock'}
+                <li class="stat-row-wrap">
                   <a
                     class="stat-row"
                     href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
@@ -432,6 +479,35 @@
                       {formatLowStock(item)}
                     </span>
                   </a>
+                  <form
+                    method="POST"
+                    action="/shopping?/addFromSource"
+                    use:enhance={() => {
+                      addedToList = new Set([...addedToList, key])
+                      return async ({ update }) => {
+                        await update({ reset: false })
+                      }
+                    }}
+                  >
+                    <input type="hidden" name="source_item_id" value={item.id} />
+                    <input type="hidden" name="source_reason" value="low_stock" />
+                    <input type="hidden" name="name" value={item.name} />
+                    <input type="hidden" name="shelf_id" value={item.shelfId} />
+                    <button
+                      type="submit"
+                      class="stat-row__add"
+                      class:stat-row__add--added={addedToList.has(key)}
+                      disabled={addedToList.has(key)}
+                      aria-label="Add {item.name} to shopping list"
+                      title="Add to shopping list"
+                    >
+                      {#if addedToList.has(key)}
+                        <IconCheck size={14} stroke={2} />
+                      {:else}
+                        <IconPlus size={14} stroke={2} />
+                      {/if}
+                    </button>
+                  </form>
                 </li>
               {/each}
               {#if data.actions.lowStock.length > data.actions.limit}
@@ -1354,7 +1430,20 @@
     gap: 0.15rem;
   }
 
+  /*
+    Container that pairs the row link with the "Add to shopping list"
+    button. We can't nest a button inside the <a>, so they sit as
+    siblings and the wrapper controls the layout.
+  */
+  .stat-row-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
   .stat-row {
+    flex: 1;
     display: flex;
     align-items: baseline;
     justify-content: space-between;
@@ -1364,11 +1453,52 @@
     text-decoration: none;
     border-bottom: 1px dashed transparent;
     transition: border-color 0.15s ease;
+    min-width: 0;
   }
 
   .stat-row:hover,
   .stat-row:focus-visible {
     border-bottom-color: var(--border);
+  }
+
+  .stat-row__add {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: inherit;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .stat-row-wrap:hover .stat-row__add,
+  .stat-row__add:focus-visible {
+    opacity: 1;
+  }
+
+  .stat-row__add:hover:not(:disabled) {
+    background: var(--matcha);
+    color: #fff;
+    border-color: var(--matcha-deep);
+    opacity: 1;
+  }
+
+  .stat-row__add--added {
+    background: var(--matcha);
+    color: #fff;
+    border-color: var(--matcha-deep);
+    opacity: 1;
+    cursor: default;
+  }
+
+  .stat-row__add:disabled {
+    cursor: default;
   }
 
   .stat-row__name {

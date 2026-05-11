@@ -4,6 +4,7 @@
     IconCameraFilled,
     IconBellFilled,
     IconUserFilled,
+    IconShoppingCartFilled,
   } from '@tabler/icons-svelte'
   import { unreadAlerts } from '$lib/stores/alerts.svelte'
 </script>
@@ -14,6 +15,11 @@
     <li>
       <a href="/scan-item" aria-label="Scan item" data-sveltekit-preload-data="off">
         <IconCameraFilled size={32} />
+      </a>
+    </li>
+    <li>
+      <a href="/shopping" aria-label="Shopping list">
+        <IconShoppingCartFilled size={32} />
       </a>
     </li>
     <li class="menu__bell">
