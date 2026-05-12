@@ -476,17 +476,8 @@
     font-weight: 700;
   }
 
-  .result-date {
-    margin: 0 0 0.85rem;
-    font-size: 1.9rem;
-    color: var(--text);
-    font-weight: 700;
-    font-family: "Cascadia Mono", monospace;
-    letter-spacing: 0.04em;
-  }
-
   /*
-    Editable date sitting where the static .result-date used to be.
+    Editable date (replaces the old static date display).
     Styled to read as the focal piece of the panel — large, centred,
     bold mono — but clearly tappable thanks to a subtle border.
   */
@@ -573,24 +564,6 @@
 
   .btn-secondary:hover {
     background: var(--background);
-  }
-
-  /* Manual entry section inside the result card (wrong-date re-scan path) */
-  .result-manual {
-    margin-top: 1rem;
-    padding-top: 0.9rem;
-    border-top: 1px solid rgba(122, 139, 63, 0.25);
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    text-align: left;
-  }
-
-  .result-manual-hint {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--matcha-deep);
   }
 
   /* Manual input panel (after failed cycles) */
