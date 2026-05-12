@@ -4,7 +4,6 @@
   import { page } from '$app/state'
   import type { PageData } from './$types'
   import SyncStatusBadge from '$lib/components/SyncStatusBadge.svelte'
-  import { enhance } from '$app/forms'
   import Sparkline from '$lib/components/Sparkline.svelte'
   import {
     formatDelta,
@@ -15,10 +14,10 @@
   import {
     IconMoodSmileBeam,
     IconPlus,
-    IconCheck,
     IconTrendingDown,
     IconAlertTriangle,
     IconTrash,
+    IconPackage,
   } from '@tabler/icons-svelte'
 
   let { data }: { data: PageData } = $props()
@@ -50,26 +49,88 @@
   let activeTab = $state<Tab>(resolveInitialTab())
 
   /*
-    Per-card expansion state for the "Now" lists. Collapsed by default,
-    flipped to true when the user taps "Show all N". Server now sends
-    the full list (capped at ACTION_LIST_MAX) so we can reveal in
-    place without an extra fetch.
-  */
-  let expandedExpiring = $state(false)
-  let expandedLowStock = $state(false)
+    Drives the soft right-edge fade on the "Now" carousels. Toggles
+    `--fade-right` 0/1 based on whether there's still hidden content
+    past the right edge; the stylesheet consumes it as an alpha stop
+    in a `mask-image`. Left edge is intentionally never faded — the
+    first tile reads as the natural "start" so a fade there would
+    feel like a glitch.
 
-  /*
-    Optimistic "added to shopping list" markers. Keyed by
-    "<itemId>:<reason>" so the same item can be added under different
-    reasons (e.g. expiring vs low_stock) without one flipping the
-    other's UI state. Cleared on the next server load.
+    Small EDGE_TOL buffer because some browsers report
+    `scrollLeft + clientWidth` slightly off from `scrollWidth` due to
+    sub-pixel rounding.
   */
-  let addedToList = $state(new Set<string>())
-  $effect(() => {
-    data.actions.expiring
-    data.actions.lowStock
-    addedToList = new Set()
-  })
+  function tileScrollFade(node: HTMLElement) {
+    const EDGE_TOL = 2
+    function updateFade() {
+      const max = node.scrollWidth - node.clientWidth
+      const hasOverflow = max > EDGE_TOL
+      const right = hasOverflow && node.scrollLeft < max - EDGE_TOL ? 1 : 0
+      node.style.setProperty('--fade-right', String(right))
+    }
+    updateFade()
+    node.addEventListener('scroll', updateFade, { passive: true })
+    const resizeObserver = new ResizeObserver(updateFade)
+    resizeObserver.observe(node)
+
+    /*
+      Mouse-wheel → horizontal scroll redirect. Without this, desktop
+      mouse users can't scroll the carousel at all: the scrollbar is
+      hidden and a regular wheel only emits vertical deltas, which
+      this container doesn't consume. Trackpad two-finger swipes
+      already arrive as `deltaX` and are handled natively, so we
+      only redirect when the gesture is dominantly vertical and the
+      shift key isn't held (shift+wheel is a browser convention for
+      horizontal scroll and shouldn't be doubled).
+    */
+    /*
+      Mouse-wheel → horizontal scroll redirect with smooth easing.
+      Without redirect, a regular mouse can't scroll the carousel
+      (vertical wheel deltas don't move this overflow-x:auto box).
+      `scrollBy({ behavior: 'smooth' })` animates each tick so the
+      motion feels continuous instead of jumping tile-by-tile, and
+      we accumulate deltas across rapid wheel events so spamming the
+      wheel snowballs into a longer smooth scroll rather than
+      restarting the animation each time.
+
+      Trackpad horizontal swipes already arrive as `deltaX` and are
+      handled natively; we only redirect when the gesture is
+      dominantly vertical and shift isn't held.
+    */
+    let pendingDelta = 0
+    let wheelRaf = 0
+    function flushWheel() {
+      wheelRaf = 0
+      if (pendingDelta === 0) return
+      node.scrollBy({ left: pendingDelta, behavior: 'smooth' })
+      pendingDelta = 0
+    }
+    function onWheel(e: WheelEvent) {
+      if (e.shiftKey) return
+      const absX = Math.abs(e.deltaX)
+      const absY = Math.abs(e.deltaY)
+      if (absY <= absX) return
+      const max = node.scrollWidth - node.clientWidth
+      if (max <= EDGE_TOL) return
+      const goingDown = e.deltaY > 0
+      if (goingDown && node.scrollLeft >= max - EDGE_TOL) return
+      if (!goingDown && node.scrollLeft <= EDGE_TOL) return
+      e.preventDefault()
+      pendingDelta += e.deltaY
+      if (!wheelRaf) wheelRaf = requestAnimationFrame(flushWheel)
+    }
+    node.addEventListener('wheel', onWheel, { passive: false })
+
+    return {
+      update: updateFade,
+      destroy() {
+        resizeObserver.disconnect()
+        node.removeEventListener('scroll', updateFade)
+        node.removeEventListener('wheel', onWheel)
+        if (wheelRaf) cancelAnimationFrame(wheelRaf)
+      },
+    }
+  }
 
   onMount(() => {
     /*
@@ -284,20 +345,92 @@
     return `in ${days} days`
   }
 
+  /*
+    Percent of the *full container* (product + tare baseline removed).
+    Falls back through a chain: tare+full → full only → null when we
+    can't meaningfully compute one. Returns 0–100 clamped, or null
+    when calibration is missing.
+  */
+  function percentFull(item: {
+    currentWeightG: number | null
+    tareG?: number | null
+    fullG?: number | null
+  }): number | null {
+    if (item.currentWeightG === null) return null
+    if (item.currentWeightG <= 0) return 0
+    if (item.fullG && item.fullG > 0) {
+      const tare = item.tareG ?? 0
+      const span = item.fullG - tare
+      if (span > 0) {
+        const product = item.currentWeightG - tare
+        const pct = (product / span) * 100
+        return Math.max(0, Math.min(100, Math.round(pct)))
+      }
+    }
+    return null
+  }
+
   function formatLowStock(item: {
     currentWeightG: number | null
     thresholdG: number | null
+    tareG?: number | null
+    fullG?: number | null
   }): string {
     if (item.currentWeightG === null) return 'low'
     if (item.currentWeightG <= 0) return 'empty'
-    if (item.thresholdG && item.thresholdG > 0) {
-      const pct = Math.max(
-        0,
-        Math.min(100, Math.round((item.currentWeightG / item.thresholdG) * 100)),
-      )
-      return `${pct}% of threshold`
-    }
+    const pct = percentFull(item)
+    if (pct !== null) return `${pct}% left`
+    /*
+      No catalog calibration available — show absolute grams as a
+      last-resort signal. "X g" is honest if not super readable; the
+      slot detail view has richer context.
+    */
     return `${Math.round(item.currentWeightG)} g`
+  }
+
+  /*
+    Urgency bucket for the image-tile ring and badge. Mirrors the
+    palette used by the folder grid's micro-cells so the two parts of
+    the dashboard speak the same visual language.
+      crit  → red    (expired / empty)
+      warn  → amber  (≤2 days / "low" bucket)
+      ok    → matcha (everything else)
+  */
+  function expiryUrgency(days: number | null): 'crit' | 'warn' | 'ok' {
+    if (days === null) return 'ok'
+    if (days < 0) return 'crit'
+    if (days <= 2) return 'warn'
+    return 'ok'
+  }
+
+  function lowStockUrgency(item: {
+    currentWeightG: number | null
+  }): 'crit' | 'warn' | 'ok' {
+    if (item.currentWeightG !== null && item.currentWeightG <= 0) return 'crit'
+    return 'warn'
+  }
+
+  /*
+    Short badge text overlaid in the tile corner. Kept ultra-terse so
+    it doesn't fight the image: "-1d" / "2d" / "low" / "empty".
+  */
+  function expiryBadge(days: number | null): string {
+    if (days === null) return ''
+    if (days < 0) return `${days}d`
+    if (days === 0) return 'today'
+    return `${days}d`
+  }
+
+  function lowStockBadge(item: {
+    currentWeightG: number | null
+    thresholdG: number | null
+    tareG?: number | null
+    fullG?: number | null
+  }): string {
+    if (item.currentWeightG !== null && item.currentWeightG <= 0) return 'empty'
+    const pct = percentFull(item)
+    if (pct !== null) return `${pct}%`
+    return 'low'
   }
 </script>
 
@@ -361,7 +494,7 @@
     {:else}
       <div class="stat-grid">
         <article
-          class="stat-card stat-card--expiring"
+          class="stat-card"
           class:stat-card--muted={data.actions.expiringTotal === 0}
         >
           <header class="stat-card__head" aria-live="polite" aria-atomic="true">
@@ -383,70 +516,35 @@
               {/if}
             </p>
 
-            <ul class="stat-card__list">
-              {#each (expandedExpiring ? data.actions.expiring : data.actions.expiring.slice(0, data.actions.limit)) as item (item.id)}
-                {@const reason = (item.daysToExpiry ?? 0) < 0 ? 'expired' : 'expiring'}
-                {@const key = item.id + ':' + reason}
-                <li class="stat-row-wrap">
+            <ul class="tile-scroll" use:tileScrollFade>
+              {#each data.actions.expiring as item (item.id)}
+                {@const u = expiryUrgency(item.daysToExpiry)}
+                <li class="tile-scroll__item">
                   <a
-                    class="stat-row"
+                    class="tile tile--{u}"
                     href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                    aria-label="{item.name} — {formatExpiry(item.daysToExpiry)}"
                   >
-                    <span class="stat-row__name">{item.name}</span>
-                    <span
-                      class="stat-row__meta"
-                      class:stat-row__meta--critical={(item.daysToExpiry ?? 0) < 0}
-                      class:stat-row__meta--warn={item.daysToExpiry === 0 ||
-                        item.daysToExpiry === 1}
-                    >
-                      {formatExpiry(item.daysToExpiry)}
-                    </span>
-                  </a>
-                  <form
-                    method="POST"
-                    action="/shopping?/addFromSource"
-                    use:enhance={() => {
-                      addedToList = new Set([...addedToList, key])
-                      return async ({ update }) => {
-                        await update({ reset: false })
-                      }
-                    }}
-                  >
-                    <input type="hidden" name="source_item_id" value={item.id} />
-                    <input type="hidden" name="source_reason" value={reason} />
-                    <input type="hidden" name="name" value={item.name} />
-                    <input type="hidden" name="shelf_id" value={item.shelfId} />
-                    <button
-                      type="submit"
-                      class="stat-row__add"
-                      class:stat-row__add--added={addedToList.has(key)}
-                      disabled={addedToList.has(key)}
-                      aria-label="Add {item.name} to shopping list"
-                      title="Add to shopping list"
-                    >
-                      {#if addedToList.has(key)}
-                        <IconCheck size={14} stroke={2} />
+                    <div class="tile__media">
+                      {#if item.imageUrl}
+                        <img
+                          src={item.imageUrl}
+                          alt=""
+                          loading="lazy"
+                          referrerpolicy="no-referrer"
+                        />
                       {:else}
-                        <IconPlus size={14} stroke={2} />
+                        <span class="tile__placeholder" aria-hidden="true">
+                          <IconPackage size={32} stroke={1.5} />
+                        </span>
                       {/if}
-                    </button>
-                  </form>
+                      <span class="tile__badge tile__badge--{u}">{expiryBadge(item.daysToExpiry)}</span>
+                    </div>
+                    <span class="tile__name">{item.name}</span>
+                    <span class="tile__meta">{formatExpiry(item.daysToExpiry)}</span>
+                  </a>
                 </li>
               {/each}
-              {#if data.actions.expiring.length > data.actions.limit}
-                <li>
-                  <button
-                    type="button"
-                    class="stat-card__toggle"
-                    aria-expanded={expandedExpiring}
-                    onclick={() => (expandedExpiring = !expandedExpiring)}
-                  >
-                    {expandedExpiring
-                      ? 'Show less'
-                      : `Show all ${data.actions.expiring.length}`}
-                  </button>
-                </li>
-              {/if}
             </ul>
           {/if}
         </article>
@@ -468,68 +566,35 @@
               {/if}
             </p>
 
-            <ul class="stat-card__list">
-              {#each (expandedLowStock ? data.actions.lowStock : data.actions.lowStock.slice(0, data.actions.limit)) as item (item.id)}
-                {@const key = item.id + ':low_stock'}
-                <li class="stat-row-wrap">
+            <ul class="tile-scroll" use:tileScrollFade>
+              {#each data.actions.lowStock as item (item.id)}
+                {@const u = lowStockUrgency(item)}
+                <li class="tile-scroll__item">
                   <a
-                    class="stat-row"
+                    class="tile tile--{u}"
                     href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                    aria-label="{item.name} — {formatLowStock(item)}"
                   >
-                    <span class="stat-row__name">{item.name}</span>
-                    <span
-                      class="stat-row__meta"
-                      class:stat-row__meta--critical={item.currentWeightG !== null &&
-                        item.currentWeightG <= 0}
-                    >
-                      {formatLowStock(item)}
-                    </span>
-                  </a>
-                  <form
-                    method="POST"
-                    action="/shopping?/addFromSource"
-                    use:enhance={() => {
-                      addedToList = new Set([...addedToList, key])
-                      return async ({ update }) => {
-                        await update({ reset: false })
-                      }
-                    }}
-                  >
-                    <input type="hidden" name="source_item_id" value={item.id} />
-                    <input type="hidden" name="source_reason" value="low_stock" />
-                    <input type="hidden" name="name" value={item.name} />
-                    <input type="hidden" name="shelf_id" value={item.shelfId} />
-                    <button
-                      type="submit"
-                      class="stat-row__add"
-                      class:stat-row__add--added={addedToList.has(key)}
-                      disabled={addedToList.has(key)}
-                      aria-label="Add {item.name} to shopping list"
-                      title="Add to shopping list"
-                    >
-                      {#if addedToList.has(key)}
-                        <IconCheck size={14} stroke={2} />
+                    <div class="tile__media">
+                      {#if item.imageUrl}
+                        <img
+                          src={item.imageUrl}
+                          alt=""
+                          loading="lazy"
+                          referrerpolicy="no-referrer"
+                        />
                       {:else}
-                        <IconPlus size={14} stroke={2} />
+                        <span class="tile__placeholder" aria-hidden="true">
+                          <IconPackage size={32} stroke={1.5} />
+                        </span>
                       {/if}
-                    </button>
-                  </form>
+                      <span class="tile__badge tile__badge--{u}">{lowStockBadge(item)}</span>
+                    </div>
+                    <span class="tile__name">{item.name}</span>
+                    <span class="tile__meta">{formatLowStock(item)}</span>
+                  </a>
                 </li>
               {/each}
-              {#if data.actions.lowStock.length > data.actions.limit}
-                <li>
-                  <button
-                    type="button"
-                    class="stat-card__toggle"
-                    aria-expanded={expandedLowStock}
-                    onclick={() => (expandedLowStock = !expandedLowStock)}
-                  >
-                    {expandedLowStock
-                      ? 'Show less'
-                      : `Show all ${data.actions.lowStock.length}`}
-                  </button>
-                </li>
-              {/if}
             </ul>
           {/if}
         </article>
@@ -1492,44 +1557,37 @@
     font-size: 0.9rem;
   }
 
+  /*
+    Stat cards sit side-by-side at every viewport so the user can
+    compare "expiring" vs "low stock" at a glance. Each card hosts a
+    horizontally-scrolling tile carousel; with ~150px of width per
+    card on a narrow phone, tiles peek at ~1.5 visible — enough to
+    signal scrollability while keeping the section compact.
+  */
   .stat-grid {
     display: grid;
-    /*
-      `minmax(0, 1fr)` (not `1fr`) so a card with a long product
-      name can't blow out its column past the dashboard's max-width.
-      Plain `1fr` is `minmax(min-content, 1fr)`, which means the
-      column grows to fit the widest unbreakable child — in our case
-      a long item name on the low-stock card was pushing the right
-      column past the page gutter on wide screens.
-    */
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.5rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.75rem;
   }
 
-  @media (min-width: 480px) {
-    .stat-grid {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    }
-  }
-
+  /*
+    Cards intentionally have no surface chrome (no background / border
+    / shadow) so the content floats on the page background and the
+    image tiles below feel like the primary visual elements. The
+    previous left-accent stripe used to differentiate "expiring" vs
+    "low stock" cards visually; that role now falls to the count
+    number which can pick up the urgency tint per card.
+  */
   .stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: var(--radius-md);
-    padding: 0.85rem 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-  }
-
-  .stat-card--expiring {
-    border-left-color: var(--warn);
+    padding: 0;
+    min-width: 0;
   }
 
   .stat-card--muted {
-    border-left-color: var(--border);
-    opacity: 0.6;
+    opacity: 0.55;
   }
 
   .stat-card__head {
@@ -1580,132 +1638,198 @@
     background: var(--warn-soft);
   }
 
-  .stat-card__list {
+  /*
+    ── Image-tile scroller (Now-section actions) ─────────────────────
+    Horizontal carousel of fixed-width tiles with scroll-snap and a
+    page-indicator strip underneath. Each card holds its own scroller;
+    the two cards live side-by-side so users can compare "expiring"
+    vs "low stock" at a glance. Tiles are intentionally small (~96px)
+    so ~1.5 peek inside each card's narrow column, hinting that more
+    content is scrollable. Reuses the same IntersectionObserver
+    pattern as the shelf-detail slot carousels for consistency.
+  */
+  .tile-scroll {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 0.25rem 0;
+    display: flex;
+    /*
+      Don't stretch children to match the tallest sibling — otherwise
+      a tile with a long product name + meta caption pulls the whole
+      row taller and the `.tile__media`'s `aspect-ratio: 1/1` loses
+      to the parent's vertical stretch, leaving the frame visibly
+      non-square. `flex-start` lets each tile size from its own
+      content.
+    */
+    align-items: flex-start;
+    gap: 0.5rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /*
+      `proximity` instead of `mandatory` so wheel-driven smooth
+      scrolls aren't interrupted by the browser yanking the offset
+      back to the nearest tile mid-animation. Touch swipes still
+      feel snappy because proximity engages when the user lets go
+      close to a snap line.
+    */
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+
+    /*
+      Soft right-edge fade only — toggled by the `tileScrollFade`
+      action via `--fade-right` (0 = fully opaque, 1 = full fade).
+      Left edge is always opaque so the first tile reads cleanly as
+      the start of the row. `--fade-width` is the band size.
+    */
+    --fade-right: 0;
+    --fade-width: 1.25rem;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - var(--fade-width)),
+      rgba(0, 0, 0, calc(1 - var(--fade-right))) 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - var(--fade-width)),
+      rgba(0, 0, 0, calc(1 - var(--fade-right))) 100%
+    );
+  }
+
+  .tile-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tile-scroll__item {
+    flex: 0 0 auto;
+    /*
+      Compact tile width tuned so a ~150px stat-card column shows
+      one tile + a peek of the next. Larger sizes would hide the
+      "scrollable" affordance; smaller would lose image legibility.
+    */
+    width: 6rem;
+    scroll-snap-align: start;
+    min-width: 0;
+  }
+
+  .tile {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    gap: 0.3rem;
+    color: inherit;
+    text-decoration: none;
+    min-width: 0;
+  }
+
+  .tile__media {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    box-sizing: border-box;
+    /*
+      `overflow: hidden` clips the absolutely-positioned image to
+      the rounded box. Without the urgency-coloured frame the tile
+      is photo-forward — the corner badge alone carries the status
+      signal, keeping the layout clean and very iOS Photos-like.
+    */
+    overflow: hidden;
+    border-radius: var(--radius-md, 12px);
+    background: var(--surface);
+    transition: transform 0.15s ease;
+  }
+
+  .tile:hover .tile__media,
+  .tile:focus-visible .tile__media {
+    transform: translateY(-1px);
+  }
+
+  .tile:focus-visible .tile__media {
+    outline: 2px solid var(--matcha-deep);
+    outline-offset: 2px;
   }
 
   /*
-    Container that pairs the row link with the "Add to shopping list"
-    button. We can't nest a button inside the <a>, so they sit as
-    siblings and the wrapper controls the layout.
+    Image + placeholder fill the media box exactly. Absolute
+    positioning keeps an intrinsically-portrait image (e.g. a bottle)
+    from pushing the parent's height past the 1:1 aspect ratio.
+    `object-fit: cover` then crops it to fit the square — `width:
+    auto` / `height: auto` would render the image at its natural
+    size, zoomed in from the top-left corner.
   */
-  .stat-row-wrap {
+  .tile__media img,
+  .tile__placeholder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+  }
+
+  .tile__placeholder {
     display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    min-width: 0;
-  }
-
-  .stat-row {
-    flex: 1;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.35rem 0;
-    color: inherit;
-    text-decoration: none;
-    border-bottom: 1px dashed transparent;
-    transition: border-color 0.15s ease;
-    min-width: 0;
-  }
-
-  .stat-row:hover,
-  .stat-row:focus-visible {
-    border-bottom-color: var(--border);
-  }
-
-  .stat-row__add {
-    flex-shrink: 0;
-    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: inherit;
-    border-radius: var(--radius-pill);
-    cursor: pointer;
-    opacity: 0.55;
-    transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    background: var(--matcha-soft, rgba(132, 169, 140, 0.18));
+    color: var(--matcha-deep, #5e7d68);
+    opacity: 0.8;
   }
 
-  .stat-row-wrap:hover .stat-row__add,
-  .stat-row__add:focus-visible {
-    opacity: 1;
+  /*
+    Per-urgency colour tokens consumed by the corner badge. Set on
+    the tile root so a future child (e.g. an overlay or progress
+    indicator) can pick them up without needing its own modifier.
+  */
+  .tile--crit {
+    --tile-badge-bg: var(--error, #c0392b);
+    --tile-badge-fg: #fff;
+  }
+  .tile--warn {
+    --tile-badge-bg: var(--warn, #d39e3a);
+    --tile-badge-fg: #fff;
+  }
+  .tile--ok {
+    --tile-badge-bg: var(--matcha, #84a98c);
+    --tile-badge-fg: #fff;
   }
 
-  .stat-row__add:hover:not(:disabled) {
-    background: var(--matcha);
-    color: #fff;
-    border-color: var(--matcha-deep);
-    opacity: 1;
+  .tile__badge {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    background: var(--tile-badge-bg);
+    color: var(--tile-badge-fg);
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0.2rem 0.4rem;
+    border-radius: var(--radius-pill, 999px);
+    letter-spacing: 0.01em;
+    /*
+      Soft drop shadow gives the badge lift and anchors it against
+      bright or cluttered product photos without adding a hard ring.
+    */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 
-  .stat-row__add--added {
-    background: var(--matcha);
-    color: #fff;
-    border-color: var(--matcha-deep);
-    opacity: 1;
-    cursor: default;
-  }
-
-  .stat-row__add:disabled {
-    cursor: default;
-  }
-
-  .stat-row__name {
-    font-size: 0.85rem;
+  .tile__name {
+    font-size: 0.8rem;
+    line-height: 1.2;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    -webkit-box-orient: vertical;
   }
 
-  .stat-row__meta {
+  .tile__meta {
     font-size: 0.7rem;
     opacity: 0.6;
-    flex-shrink: 0;
-  }
-
-  .stat-row__meta--critical {
-    opacity: 1;
-    color: var(--error);
-  }
-
-  .stat-row__meta--warn {
-    opacity: 1;
-    color: var(--warn);
-  }
-
-  .stat-card__toggle {
-    margin-top: 0.25rem;
-    width: 100%;
-    padding: 0.4rem 0.5rem;
-    background: transparent;
-    border: none;
-    border-top: 1px dashed var(--border);
-    color: inherit;
-    font: inherit;
-    font-size: 0.75rem;
-    font-weight: 500;
-    opacity: 0.7;
-    cursor: pointer;
-    border-radius: 0;
-    text-align: left;
-    transition: opacity 0.15s ease, color 0.15s ease;
-  }
-
-  .stat-card__toggle:hover,
-  .stat-card__toggle:focus-visible {
-    opacity: 1;
-    color: var(--matcha-deep);
+    line-height: 1.1;
   }
 
   .shelves {
@@ -1789,7 +1913,11 @@
   /*
     Filled cells are color-coded by urgency so the preview itself
     becomes the status indicator — no separate text line needed.
-    Severity order: expired > urgent (expires ≤2d) > low (stock) > normal.
+    Severity order: expired > depleted (item present, current ≤ 0) >
+    urgent (expires ≤2d) > low (stock) > normal.
+    `depleted` and `expired` both render red because both represent
+    "must act now" states. Slots with no item assigned at all keep
+    the implicit dashed-outline `--empty` style (unchanged).
   */
   .folder__cell--normal {
     background: var(--matcha);
@@ -1806,6 +1934,12 @@
   .folder__cell--urgent {
     background: var(--warn);
     border-color: var(--warn);
+    border-style: solid;
+  }
+
+  .folder__cell--depleted {
+    background: var(--error, #c0392b);
+    border-color: var(--error, #c0392b);
     border-style: solid;
   }
 

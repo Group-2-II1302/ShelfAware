@@ -10,7 +10,13 @@ import {
 } from "$lib/insights";
 
 const EXPIRY_WINDOW_DAYS = 7;
-const ACTION_LIST_LIMIT = 5;
+/*
+  Initial tile count shown in the dashboard's "expiring" / "low stock"
+  image-tile grids. 4 fills exactly two rows (2-per-row layout). The
+  full list (capped at ACTION_LIST_MAX) is sent so the client can
+  expand in place without a refetch.
+*/
+const ACTION_LIST_LIMIT = 4;
 /*
   Upper bound on what we send for the "show all" expansion. Keeps the
   payload reasonable on accounts with dozens of expiring items while
@@ -24,9 +30,23 @@ type ActionItem = {
   shelfName: string;
   scaleIndex: number;
   name: string;
+  /*
+    Off image URL when we have product catalog data for this item.
+    Used by the dashboard's image-tile grid; null falls back to a
+    placeholder tile so the layout never collapses.
+  */
+  imageUrl: string | null;
   daysToExpiry: number | null;
   currentWeightG: number | null;
   thresholdG: number | null;
+  /*
+    Catalog-derived calibration for the slot, when available. Used by
+    the dashboard's low-stock card to display "X% full" relative to a
+    *full container* rather than relative to the threshold (which is
+    an arbitrary low-water mark and not intuitive to users).
+  */
+  tareG: number | null;
+  fullG: number | null;
 };
 
 export const load: PageServerLoad = async ({ locals, depends, url }) => {
@@ -133,10 +153,15 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
   */
   /*
     Per-slot state for the folder-tile preview. Most-severe state per
-    scale_index wins (expired > urgent > low > normal). Empty slots
-    stay implicit (anything not in this map renders as a dashed outline).
+    scale_index wins (expired > depleted > urgent > low > normal).
+    "depleted" means an item *is* assigned to the slot but its
+    current weight is at or below zero — i.e. fully consumed but
+    not yet replaced. Distinct from the physical "empty" slot (no
+    item assigned at all), which stays implicit and renders as a
+    dashed outline cell in the folder preview. Promoted above
+    `low` because "you have none" is the strongest call to action.
   */
-  type SlotState = "normal" | "low" | "urgent" | "expired";
+  type SlotState = "normal" | "low" | "urgent" | "depleted" | "expired";
   const shelfRollup: Record<
     string,
     {
@@ -159,7 +184,8 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
     normal: 0,
     low: 1,
     urgent: 2,
-    expired: 3,
+    depleted: 3,
+    expired: 4,
   };
 
   const allShelfIds = shelvesWithSync.map((s) => s.id);
@@ -202,6 +228,21 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
             row.current_weight_g <= row.low_stock_threshold_g
           ) {
             state = "low";
+          }
+          /*
+            `depleted` (current ≤ 0 with an item still assigned) wins
+            over `low` and `urgent` because "you have none of this" is
+            more urgent than "you have a little" or "it expires soon"
+            — you literally cannot use it. Still loses to `expired`,
+            which implies food safety. Distinct from the implicit
+            "empty" state used for slots with no item assigned.
+          */
+          if (
+            row.current_weight_g !== null &&
+            row.current_weight_g <= 0 &&
+            severity["depleted"] > severity[state]
+          ) {
+            state = "depleted";
           }
           const prev = rollup.slotStates.get(row.scale_index) ?? "normal";
           if (severity[state] > severity[prev]) {
@@ -256,8 +297,11 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
         shelfName: shelfNameById[row.shelf_id] ?? "Shelf",
         scaleIndex: row.scale_index,
         name,
+        imageUrl: cat?.image_url ?? null,
         currentWeightG: row.current_weight_g,
         thresholdG: row.low_stock_threshold_g,
+        tareG: cat?.tare_weight_g ?? null,
+        fullG: cat?.full_weight_g ?? null,
       };
 
       if (row.expiry_date) {
