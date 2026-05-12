@@ -5,9 +5,11 @@
   export interface OcrProps {
     /** Called with "DD-MM-YYYY" once the user taps Confirm. */
     onDateFound: (date: string) => void
+    /** When true, show developer-facing preview + raw OCR debug. Default false. */
+    showDebug?: boolean
   }
 
-  let { onDateFound }: OcrProps = $props()
+  let { onDateFound, showDebug = false }: OcrProps = $props()
 
   // ===== DOM refs =====
   let videoElement = $state<HTMLVideoElement | null>(null)
@@ -21,8 +23,9 @@
   let lastRawText = $state<string>('')
   let stream = $state<MediaStream | null>(null)
   let foundDate = $state<string | null>(null)
+  let editedDateIso = $state<string>('')  // bound to <input type="date">, format "YYYY-MM-DD"
+  let editError = $state<string | null>(null)
   let failCount = $state(0)          // full scan cycles that found nothing
-  let rescanCount = $state(0)        // times user tapped Re-scan on a wrong result
   let manualInput = $state('')
   let manualError = $state(false)
 
@@ -30,8 +33,6 @@
   const UPSCALE = 2
   // Show manual input after this many failed scan cycles (no date found at all)
   const SHOW_MANUAL_AFTER_FAIL = 2
-  // Show manual input after this many Re-scan taps (date found but kept wrong)
-  const SHOW_MANUAL_AFTER_RESCAN = 3
   // Crop area — same proportions as the green overlay box
   const CROP_W_RATIO = 0.7
   const CROP_H_RATIO = 0.25
@@ -59,6 +60,24 @@
     if (!text) return ''
     const corrected = fixDigitOnly(text)
     return parseExpiryDate(corrected) ?? ''
+  }
+
+  /*
+    The detected date arrives as "DD-MM-YYYY" but <input type="date">
+    only accepts ISO "YYYY-MM-DD". These tiny helpers shuttle between
+    the two so the edit-in-place flow works without changing the
+    onDateFound contract with the parent page.
+  */
+  function ddmmyyyyToIso(dmy: string): string {
+    const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(dmy.trim())
+    if (!match) return ''
+    return `${match[3]}-${match[2]}-${match[1]}`
+  }
+
+  function isoToDdmmyyyy(iso: string): string {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim())
+    if (!match) return ''
+    return `${match[3]}-${match[2]}-${match[1]}`
   }
 
   // ===== Camera =====
@@ -170,6 +189,8 @@
       const date = findDate(text)
       if (date) {
         foundDate = date
+        editedDateIso = ddmmyyyyToIso(date)
+        editError = null
       } else {
         failCount += 1
         errorMessage = failCount >= SHOW_MANUAL_AFTER_FAIL
@@ -197,20 +218,35 @@
     }
   }
 
-  /** User confirmed the detected date — hand it off to the page. */
+  /*
+    Confirm the date currently in the editable field. Re-parse so a
+    manual tweak still goes through the same calendar-validation as
+    a fresh OCR result — guards against the user selecting Feb 30
+    via spinner madness or pasting nonsense.
+  */
   function confirmDate() {
-    if (!foundDate) return
-    onDateFound(foundDate)
+    const dmy = isoToDdmmyyyy(editedDateIso)
+    if (!dmy) {
+      editError = 'Please pick a valid date.'
+      return
+    }
+    const parsed = parseExpiryDate(dmy)
+    if (!parsed) {
+      editError = "That date doesn't look valid."
+      return
+    }
+    editError = null
+    onDateFound(parsed)
   }
 
   /** User rejected the detected date — clear it so they can re-scan. */
   function rescan() {
     foundDate = null
+    editedDateIso = ''
+    editError = null
     errorMessage = null
     manualInput = ''
     manualError = false
-    rescanCount += 1
-    // Keep failCount so the fail-based manual input also stays visible
   }
 
   // ===== Lifecycle =====
@@ -229,12 +265,15 @@
   <div class="video-wrapper">
     <video bind:this={videoElement} autoplay playsinline muted></video>
     {#if isStarted}
-      <div class="scan-overlay"></div>
+      <div class="scan-overlay" aria-hidden="true"></div>
+      <div class="roi-caption" aria-hidden="true">
+        Frame the expiry date inside the box
+      </div>
     {/if}
 
     {#if !isStarted}
       <div class="controls-overlay">
-        <button onclick={startCamera} class="main-btn">Start Camera</button>
+        <button onclick={startCamera} class="main-btn">Start camera</button>
       </div>
     {/if}
   </div>
@@ -245,33 +284,22 @@
     {#if foundDate}
       <div class="result-panel">
         <p class="result-label">Expiry date detected</p>
-        <p class="result-date">{foundDate}</p>
+        <input
+          class="result-date-input"
+          class:result-date-input--error={editError}
+          type="date"
+          bind:value={editedDateIso}
+          aria-label="Expiry date"
+        />
+        {#if editError}
+          <p class="manual-error result-date-error">{editError}</p>
+        {:else}
+          <p class="result-edit-hint">Tap to edit if it's not quite right.</p>
+        {/if}
         <div class="result-actions">
           <button onclick={rescan} class="btn-secondary">Re-scan</button>
           <button onclick={confirmDate} class="btn-confirm">Confirm</button>
         </div>
-
-        <!-- After 3 re-scans, offer manual entry right inside the result card -->
-        {#if rescanCount >= SHOW_MANUAL_AFTER_RESCAN}
-          <div class="result-manual">
-            <p class="result-manual-hint">Not right? Type the date you see on the label:</p>
-            <div class="manual-row">
-              <input
-                class="manual-input"
-                class:manual-input--error={manualError}
-                type="text"
-                inputmode="numeric"
-                placeholder="e.g. 10 03 27"
-                bind:value={manualInput}
-                onkeydown={(e) => e.key === 'Enter' && tryManualDate()}
-              />
-              <button class="btn-use" onclick={tryManualDate}>Use</button>
-            </div>
-            {#if manualError}
-              <p class="manual-error">Couldn't recognise that — try DD MM YY or DD/MM/YYYY.</p>
-            {/if}
-          </div>
-        {/if}
       </div>
     {:else}
       <div class="actions">
@@ -279,7 +307,7 @@
           {#if isScanning}
             Reading…
           {:else}
-            Scan Expiry Date
+            Scan
           {/if}
         </button>
       </div>
@@ -310,20 +338,28 @@
       </div>
     {/if}
 
-    <div class="preview-wrap">
-      <p class="raw-label">Preview:</p>
-      <canvas bind:this={previewCanvas} class="preview-canvas"></canvas>
-    </div>
+    {#if errorMessage}
+      <p class="error-msg" role="status">{errorMessage}</p>
+    {/if}
 
-    <div class="debug-panel">
-      {#if lastRawText}
-        <p class="raw-label">Google Vision read:</p>
-        <code class="raw-output">"{lastRawText}"</code>
-      {/if}
-      {#if errorMessage}
-        <p class="error-msg">{errorMessage}</p>
-      {/if}
-    </div>
+    {#if showDebug}
+      <div class="preview-wrap">
+        <p class="raw-label">Preview:</p>
+        <canvas bind:this={previewCanvas} class="preview-canvas"></canvas>
+      </div>
+
+      <div class="debug-panel">
+        {#if lastRawText}
+          <p class="raw-label">Google Vision read:</p>
+          <code class="raw-output">"{lastRawText}"</code>
+        {/if}
+      </div>
+    {:else}
+      <!-- Preview canvas still mounted (hidden) so captureFrame()
+           can paint into it without null-checking — cleaner than
+           rebuilding the capture pipeline conditionally. -->
+      <canvas bind:this={previewCanvas} style="display: none;"></canvas>
+    {/if}
   {/if}
 </div>
 
@@ -331,32 +367,56 @@
   .ocr-container {
     width: 100%;
     max-width: 500px;
-    margin: auto;
+    margin: 0 auto;
   }
+
   .video-wrapper {
     position: relative;
     width: 100%;
     aspect-ratio: 16/9;
     background: #000;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
   }
+
   video {
     width: 100%;
     height: 100%;
     object-fit: cover;
   }
+
+  /* ROI box. Coordinates mirror CROP_*_RATIO constants so the user
+     frames the exact rectangle the capture pipeline crops. */
   .scan-overlay {
     position: absolute;
-    left: 15%;   /* (1 - CROP_W_RATIO 0.7) / 2 = 0.15 */
-    top: 10%;    /* CROP_Y_RATIO 0.1 */
-    width: 70%;  /* CROP_W_RATIO 0.7 */
-    height: 25%; /* CROP_H_RATIO 0.25 */
-    border: 3px solid #00ff88;
-    border-radius: 8px;
+    left: 15%;
+    top: 10%;
+    width: 70%;
+    height: 25%;
+    border: 2px solid var(--matcha);
+    border-radius: var(--radius-sm);
     pointer-events: none;
-    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    box-shadow:
+      0 0 0 9999px rgba(0, 0, 0, 0.55),
+      0 0 12px rgba(122, 139, 63, 0.6);
   }
+
+  .roi-caption {
+    position: absolute;
+    left: 50%;
+    bottom: 0.75rem;
+    transform: translateX(-50%);
+    background: rgba(20, 16, 14, 0.6);
+    color: #fff;
+    padding: 0.3rem 0.7rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    pointer-events: none;
+    backdrop-filter: blur(4px);
+  }
+
   .controls-overlay {
     position: absolute;
     inset: 0;
@@ -365,195 +425,312 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.8);
   }
+
   .actions {
-    margin-top: 1rem;
+    margin-top: 0.85rem;
   }
+
   .main-btn {
     width: 100%;
-    padding: 14px;
-    background: #6366f1;
-    color: white;
+    padding: 0.85rem 1rem;
+    background: var(--text);
+    color: var(--background);
     border: none;
-    border-radius: 8px;
-    font-weight: bold;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 600;
     cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
   }
+
+  .main-btn:hover:not(:disabled) {
+    background: #1f1916;
+  }
+
+  .main-btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
   .main-btn:disabled {
-    background: #4b4b6b;
+    opacity: 0.55;
     cursor: not-allowed;
   }
 
+  /* ── Result panel ─────────────────────────────────────────────────── */
   .result-panel {
-    margin-top: 1rem;
-    padding: 16px;
-    background: #ecfdf5;
-    border: 2px solid #10b981;
-    border-radius: 10px;
+    margin-top: 0.85rem;
+    padding: 1.1rem 1.1rem 1rem;
+    background: var(--matcha-soft);
+    border-left: 3px solid var(--matcha);
+    border-radius: var(--radius-md);
     text-align: center;
   }
+
   .result-label {
-    margin: 0 0 4px 0;
-    font-size: 0.8rem;
-    color: #065f46;
+    margin: 0 0 0.25rem;
+    font-size: 0.72rem;
+    color: var(--matcha-deep);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-  }
-  .result-date {
-    margin: 0 0 12px 0;
-    font-size: 2rem;
-    color: #064e3b;
+    letter-spacing: 0.08em;
     font-weight: 700;
-    font-family: monospace;
-    letter-spacing: 0.05em;
   }
+
+  .result-date {
+    margin: 0 0 0.85rem;
+    font-size: 1.9rem;
+    color: var(--text);
+    font-weight: 700;
+    font-family: "Cascadia Mono", monospace;
+    letter-spacing: 0.04em;
+  }
+
+  /*
+    Editable date sitting where the static .result-date used to be.
+    Styled to read as the focal piece of the panel — large, centred,
+    bold mono — but clearly tappable thanks to a subtle border.
+  */
+  .result-date-input {
+    margin: 0 auto 0.4rem;
+    display: block;
+    width: 100%;
+    max-width: 14rem;
+    padding: 0.55rem 0.65rem;
+    background: var(--surface);
+    border: 1px solid var(--matcha);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-family: "Cascadia Mono", monospace;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text);
+    text-align: center;
+    letter-spacing: 0.03em;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .result-date-input:focus {
+    border-color: var(--matcha-deep);
+    box-shadow: 0 0 0 3px rgba(122, 139, 63, 0.25);
+  }
+
+  .result-date-input--error {
+    border-color: var(--error);
+    background: #fbecec;
+  }
+
+  .result-edit-hint {
+    margin: 0 0 0.85rem;
+    font-size: 0.78rem;
+    color: var(--matcha-deep);
+    opacity: 0.85;
+  }
+
+  .result-date-error {
+    margin: 0 0 0.85rem;
+    text-align: center;
+  }
+
   .result-actions {
     display: flex;
-    gap: 10px;
+    gap: 0.6rem;
     justify-content: center;
   }
-  .btn-confirm {
-    flex: 1;
-    padding: 12px;
-    background: #10b981;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-weight: bold;
-    cursor: pointer;
-    font-size: 1rem;
-  }
+
+  .btn-confirm,
   .btn-secondary {
     flex: 1;
-    padding: 12px;
-    background: #e4e4e7;
-    color: #18181b;
-    border: none;
-    border-radius: 8px;
-    font-weight: bold;
+    padding: 0.7rem 0.9rem;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
     cursor: pointer;
-    font-size: 1rem;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+
+  .btn-confirm {
+    background: var(--text);
+    color: var(--background);
+    border: none;
+  }
+
+  .btn-confirm:hover {
+    background: #1f1916;
+  }
+
+  .btn-confirm:active,
+  .btn-secondary:active {
+    transform: translateY(1px);
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--background);
   }
 
   /* Manual entry section inside the result card (wrong-date re-scan path) */
   .result-manual {
-    margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid #d1fae5;
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid rgba(122, 139, 63, 0.25);
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 0.5rem;
+    text-align: left;
   }
+
   .result-manual-hint {
     margin: 0;
     font-size: 0.82rem;
-    color: #065f46;
+    color: var(--matcha-deep);
   }
 
-  /* Manual input panel */
+  /* Manual input panel (after failed cycles) */
   .manual-panel {
-    margin-top: 1rem;
-    padding: 14px;
-    background: #fefce8;
-    border: 1.5px solid #fbbf24;
-    border-radius: 10px;
+    margin-top: 0.85rem;
+    padding: 0.9rem 1rem;
+    background: var(--warn-soft);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius-md);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0.6rem;
   }
+
   .manual-hint {
     margin: 0;
-    font-size: 0.85rem;
-    color: #78350f;
-    line-height: 1.4;
+    font-size: 0.86rem;
+    color: var(--text);
+    line-height: 1.45;
   }
+
   .manual-hint code {
-    background: #fde68a;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 0.8rem;
+    background: rgba(194, 138, 47, 0.18);
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
+    font-size: 0.82rem;
+    font-family: "Cascadia Mono", monospace;
   }
+
   .manual-row {
     display: flex;
-    gap: 8px;
+    gap: 0.5rem;
   }
+
   .manual-input {
     flex: 1;
-    padding: 10px 12px;
-    border: 1.5px solid #d97706;
-    border-radius: 8px;
+    min-width: 0;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font: inherit;
     font-size: 1rem;
-    background: #fff;
-    color: #1c1917;
+    background: var(--surface);
+    color: var(--text);
     outline: none;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s ease;
   }
-  .manual-input:focus { border-color: #92400e; }
-  .manual-input--error { border-color: #dc2626; background: #fef2f2; }
+
+  .manual-input:focus {
+    border-color: var(--matcha);
+    box-shadow: 0 0 0 3px var(--matcha-soft);
+  }
+
+  .manual-input--error {
+    border-color: var(--error);
+    background: #fbecec;
+  }
+
   .btn-use {
-    padding: 10px 18px;
-    background: #d97706;
-    color: white;
+    padding: 0.6rem 1.1rem;
+    background: var(--text);
+    color: var(--background);
     border: none;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 0.95rem;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.92rem;
     cursor: pointer;
     white-space: nowrap;
-    transition: opacity 0.15s;
+    transition: background 0.15s ease, transform 0.05s ease;
   }
-  .btn-use:hover { opacity: 0.85; }
+
+  .btn-use:hover {
+    background: #1f1916;
+  }
+
+  .btn-use:active {
+    transform: translateY(1px);
+  }
+
   .manual-error {
     margin: 0;
     font-size: 0.8rem;
-    color: #dc2626;
+    color: var(--error);
   }
 
+  /* ── Inline error after a scan attempt ───────────────────────────── */
+  .error-msg {
+    margin: 0.6rem 0 0;
+    padding: 0.5rem 0.75rem;
+    color: var(--text);
+    font-size: 0.88rem;
+    background: var(--warn-soft);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Dev preview / raw OCR panel (gated behind showDebug) ────────── */
   .preview-wrap {
     margin-top: 0.75rem;
-    padding: 8px;
-    background: #f4f4f5;
-    border-radius: 8px;
-    border: 1px solid #e4e4e7;
+    padding: 0.5rem;
+    background: var(--background);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
   }
+
   .preview-canvas {
     width: 100%;
     max-height: 120px;
     object-fit: contain;
-    background: #fff;
-    border: 1px solid #e4e4e7;
-    border-radius: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
     image-rendering: pixelated;
   }
 
-  /* Debug Styling */
   .debug-panel {
-    margin-top: 1rem;
-    padding: 10px;
-    background: #f4f4f5;
-    border-radius: 8px;
-    border: 1px solid #e4e4e7;
-    min-height: 60px;
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--background);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    min-height: 3rem;
   }
+
   .raw-label {
     font-size: 0.7rem;
-    color: #71717a;
+    color: var(--text);
+    opacity: 0.6;
     text-transform: uppercase;
+    letter-spacing: 0.06em;
     margin: 0;
   }
+
   .raw-output {
     display: block;
-    font-family: monospace;
-    color: #18181b;
-    font-size: 1.1rem;
-    padding: 4px 0;
+    font-family: "Cascadia Mono", monospace;
+    color: var(--text);
+    font-size: 0.95rem;
+    padding: 0.25rem 0 0;
     word-break: break-all;
-  }
-  .error-msg {
-    color: #dc2626;
-    font-size: 0.9rem;
-    margin-top: 4px;
-    font-weight: 500;
   }
 </style>

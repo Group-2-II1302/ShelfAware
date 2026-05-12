@@ -341,8 +341,13 @@
     animation: backdrop-fade 0.2s ease-out;
   }
 
-  /* ── Layout: bottom sheet on mobile ────────────────────────────────────── */
-  .product-modal {
+  /*
+    Layout: bottom sheet on mobile.
+    Scoped to [open] so a closed <dialog> falls back to the
+    user-agent default (display: none) and doesn't keep occupying
+    a viewport's worth of scroll height behind the scenes.
+  */
+  .product-modal[open] {
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -354,7 +359,17 @@
     width: 100%;
     max-height: 90vh;
     overflow-y: auto;
-    border-radius: 1rem 1rem 0 0;
+    /*
+      Thin overlay scrollbar that sits inside the rounded panel
+      rather than the gutter that browsers reserve outside the
+      border-radius. Firefox uses scrollbar-width / scrollbar-color;
+      WebKit needs ::-webkit-scrollbar. Both fall back gracefully to
+      the platform default when the property is unsupported.
+    */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(51, 42, 38, 0.25) transparent;
+    scrollbar-gutter: stable;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     padding: 1.25rem 1.25rem 1.5rem;
     position: relative;
     box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.18);
@@ -362,15 +377,33 @@
     animation: panel-slide-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
+  .modal-panel::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .modal-panel::-webkit-scrollbar-track {
+    background: transparent;
+    margin: 0.75rem 0;
+  }
+
+  .modal-panel::-webkit-scrollbar-thumb {
+    background: rgba(51, 42, 38, 0.25);
+    border-radius: var(--radius-pill);
+  }
+
+  .modal-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(51, 42, 38, 0.4);
+  }
+
   /* ── Layout: centered dialog on desktop ────────────────────────────────── */
   @media (min-width: 640px) {
-    .product-modal {
+    .product-modal[open] {
       align-items: center;
     }
 
     .modal-panel {
       max-width: 32rem;
-      border-radius: 1rem;
+      border-radius: var(--radius-xl);
       animation: panel-pop-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
       box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
     }
@@ -412,7 +445,7 @@
     flex: 0 0 5rem;
     width: 5rem;
     height: 5rem;
-    border-radius: 0.6rem;
+    border-radius: var(--radius-md);
     overflow: hidden;
     background: rgba(0, 0, 0, 0.04);
     display: flex;

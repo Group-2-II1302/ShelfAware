@@ -3,17 +3,23 @@
     IconHome2Filled,
     IconCameraFilled,
     IconBellFilled,
-    IconDots,
+    IconUserFilled,
+    IconShoppingCartFilled,
   } from '@tabler/icons-svelte'
   import { unreadAlerts } from '$lib/stores/alerts.svelte'
 </script>
 
 <div id="menu">
   <ul>
-    <li><a href="/"><IconHome2Filled size={32} /></a></li>
+    <li><a href="/" aria-label="Home"><IconHome2Filled size={32} /></a></li>
     <li>
-      <a href="/scan-item" data-sveltekit-preload-data="off">
+      <a href="/scan-item" aria-label="Scan item" data-sveltekit-preload-data="off">
         <IconCameraFilled size={32} />
+      </a>
+    </li>
+    <li>
+      <a href="/shopping" aria-label="Shopping list">
+        <IconShoppingCartFilled size={32} />
       </a>
     </li>
     <li class="menu__bell">
@@ -26,7 +32,9 @@
         {/if}
       </a>
     </li>
-    <li><IconDots size={32} /></li>
+    <li>
+      <a href="/profile" aria-label="Profile"><IconUserFilled size={32} /></a>
+    </li>
   </ul>
 </div>
 

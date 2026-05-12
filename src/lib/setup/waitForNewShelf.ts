@@ -17,11 +17,20 @@ type Shelf = {
   unrelated invites arriving mid-flow — none of which a created_at
   timestamp filter would survive.
 */
+export type PollOutcome = "ok" | "fail";
+
 export async function waitForNewShelf(
   signal: AbortSignal,
-  timeoutMs = 360_000, // 6 minutes
-  pollIntervalMs = 3_000,
+  opts: {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+    onProgress?: (outcome: PollOutcome) => void;
+  } = {},
 ): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? 360_000; // 6 minutes
+  const pollIntervalMs = opts.pollIntervalMs ?? 3_000;
+  const onProgress = opts.onProgress;
+
   const baseline = await fetchShelfIds();
 
   const deadline = Date.now() + timeoutMs;
@@ -34,6 +43,7 @@ export async function waitForNewShelf(
     try {
       const ids = await fetchShelfIds();
       const fresh = [...ids].find((id) => !baseline.has(id));
+      onProgress?.("ok");
       if (fresh) {
         console.log("[setup] detected fresh shelf:", fresh);
         return fresh;
@@ -46,6 +56,7 @@ export async function waitForNewShelf(
         these are expected. Logged for diagnostics only.
       */
       console.warn("[setup] poll iteration failed:", e?.message ?? e);
+      onProgress?.("fail");
     }
 
     await sleep(pollIntervalMs, signal);

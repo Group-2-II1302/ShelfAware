@@ -1,6 +1,55 @@
 import type { PageServerLoad } from "./$types";
+import { SLOTS_PER_SHELF } from "$lib/shelf";
+import {
+  computeInsights,
+  resolveRange,
+  type AlertRow,
+  type ExpiryRow,
+  type InsightItemMeta,
+  type LogRow,
+} from "$lib/insights";
 
-export const load: PageServerLoad = async ({ locals, depends }) => {
+const EXPIRY_WINDOW_DAYS = 7;
+/*
+  Initial tile count shown in the dashboard's "expiring" / "low stock"
+  image-tile grids. 4 fills exactly two rows (2-per-row layout). The
+  full list (capped at ACTION_LIST_MAX) is sent so the client can
+  expand in place without a refetch.
+*/
+const ACTION_LIST_LIMIT = 4;
+/*
+  Upper bound on what we send for the "show all" expansion. Keeps the
+  payload reasonable on accounts with dozens of expiring items while
+  still covering any realistic household.
+*/
+const ACTION_LIST_MAX = 50;
+
+type ActionItem = {
+  id: string;
+  shelfId: string;
+  shelfName: string;
+  scaleIndex: number;
+  name: string;
+  /*
+    Off image URL when we have product catalog data for this item.
+    Used by the dashboard's image-tile grid; null falls back to a
+    placeholder tile so the layout never collapses.
+  */
+  imageUrl: string | null;
+  daysToExpiry: number | null;
+  currentWeightG: number | null;
+  thresholdG: number | null;
+  /*
+    Catalog-derived calibration for the slot, when available. Used by
+    the dashboard's low-stock card to display "X% full" relative to a
+    *full container* rather than relative to the threshold (which is
+    an arbitrary low-water mark and not intuitive to users).
+  */
+  tareG: number | null;
+  fullG: number | null;
+};
+
+export const load: PageServerLoad = async ({ locals, depends, url }) => {
   /*
     Tag this load so the client can selectively refresh shelf+sync
     state in response to realtime events without invalidating
@@ -8,14 +57,24 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   */
   depends("app:shelves");
 
-  const { data: shelves, error } = await locals.supabase
-    .from("shelves")
-    .select("id, name")
-    .order("name");
+  const { key: insightRangeKey, days: insightWindowDays } = resolveRange(
+    url.searchParams.get("range"),
+  );
+
+  const [{ data: shelves, error }, { data: profile }] = await Promise.all([
+    locals.supabase.from("shelves").select("id, name").order("name"),
+    locals.supabase
+      .from("profiles")
+      .select("first_name")
+      .eq("id", locals.user?.id ?? "")
+      .maybeSingle(),
+  ]);
 
   if (error) {
     throw error;
   }
+
+  const firstName = profile?.first_name?.trim() || null;
 
   /*
     Compute "last seen" per shelf so the dashboard can render a sync
@@ -62,8 +121,391 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     }
   }
 
+  /*
+    Build the "Now" action lists: items expiring within EXPIRY_WINDOW_DAYS
+    (including already-expired) and items currently below their low-stock
+    threshold. Joins product_catalog for a readable name; falls back to
+    the barcode if no product entry exists yet.
+  */
+  const shelfNameById: Record<string, string> = {};
+  for (const shelf of shelvesWithSync) {
+    shelfNameById[shelf.id] = shelf.name;
+  }
+
+  const today = new Date(new Date().toISOString().split("T")[0]);
+  const todayMs = today.getTime();
+
+  let expiring: ActionItem[] = [];
+  let lowStock: ActionItem[] = [];
+
+  /*
+    Item metadata captured while iterating shelf_items for the Now
+    lists. Reused later by the Insights pipeline (consumption rate,
+    waste detection, sparklines) so we don't query the same rows twice.
+  */
+  const itemMeta = new Map<string, InsightItemMeta>();
+
+  /*
+    Per-shelf rollups for the Shelves section cards. Lets each shelf row
+    show fullness ("3 / 6 slots") and a "earliest expires" hint without
+    a second query — we already iterate every shelf_item below for the
+    Now lists.
+  */
+  /*
+    Per-slot state for the folder-tile preview. Most-severe state per
+    scale_index wins (expired > depleted > urgent > low > normal).
+    "depleted" means an item *is* assigned to the slot but its
+    current weight is at or below zero — i.e. fully consumed but
+    not yet replaced. Distinct from the physical "empty" slot (no
+    item assigned at all), which stays implicit and renders as a
+    dashed outline cell in the folder preview. Promoted above
+    `low` because "you have none" is the strongest call to action.
+  */
+  type SlotState = "normal" | "low" | "urgent" | "depleted" | "expired";
+  const shelfRollup: Record<
+    string,
+    {
+      filledSlots: number;
+      earliestExpiryDays: number | null;
+      filledSet: Set<number>;
+      slotStates: Map<number, SlotState>;
+    }
+  > = {};
+  for (const shelf of shelvesWithSync) {
+    shelfRollup[shelf.id] = {
+      filledSlots: 0,
+      earliestExpiryDays: null,
+      filledSet: new Set(),
+      slotStates: new Map(),
+    };
+  }
+
+  const severity: Record<SlotState, number> = {
+    normal: 0,
+    low: 1,
+    urgent: 2,
+    depleted: 3,
+    expired: 4,
+  };
+
+  const allShelfIds = shelvesWithSync.map((s) => s.id);
+  if (allShelfIds.length > 0) {
+    const { data: items, error: itemsErr } = await locals.supabase
+      .from("shelf_items")
+      .select(
+        "id, shelf_id, scale_index, barcode, expiry_date, current_weight_g, low_stock_threshold_g, created_at, product_catalog(product_name, brand, image_url, tare_weight_g, full_weight_g)",
+      )
+      .in("shelf_id", allShelfIds);
+
+    if (itemsErr) {
+      console.error("[dashboard] failed to load action items", itemsErr);
+    }
+
+    for (const row of items ?? []) {
+      const rollup = shelfRollup[row.shelf_id];
+      if (rollup) {
+        if (
+          typeof row.scale_index === "number" &&
+          !rollup.filledSet.has(row.scale_index)
+        ) {
+          rollup.filledSet.add(row.scale_index);
+          rollup.filledSlots += 1;
+        }
+
+        if (typeof row.scale_index === "number") {
+          let state: SlotState = "normal";
+          if (row.expiry_date) {
+            const days = Math.ceil(
+              (new Date(row.expiry_date).getTime() - todayMs) / 86_400_000,
+            );
+            if (days < 0) state = "expired";
+            else if (days <= 2) state = "urgent";
+          }
+          if (
+            state === "normal" &&
+            row.low_stock_threshold_g !== null &&
+            row.current_weight_g !== null &&
+            row.current_weight_g <= row.low_stock_threshold_g
+          ) {
+            state = "low";
+          }
+          /*
+            `depleted` (current ≤ 0 with an item still assigned) wins
+            over `low` and `urgent` because "you have none of this" is
+            more urgent than "you have a little" or "it expires soon"
+            — you literally cannot use it. Still loses to `expired`,
+            which implies food safety. Distinct from the implicit
+            "empty" state used for slots with no item assigned.
+          */
+          if (
+            row.current_weight_g !== null &&
+            row.current_weight_g <= 0 &&
+            severity["depleted"] > severity[state]
+          ) {
+            state = "depleted";
+          }
+          const prev = rollup.slotStates.get(row.scale_index) ?? "normal";
+          if (severity[state] > severity[prev]) {
+            rollup.slotStates.set(row.scale_index, state);
+          }
+        }
+
+        if (row.expiry_date) {
+          const days = Math.ceil(
+            (new Date(row.expiry_date).getTime() - todayMs) / 86_400_000,
+          );
+          if (
+            rollup.earliestExpiryDays === null ||
+            days < rollup.earliestExpiryDays
+          ) {
+            rollup.earliestExpiryDays = days;
+          }
+        }
+      }
+
+      const product = Array.isArray(row.product_catalog)
+        ? row.product_catalog[0]
+        : row.product_catalog;
+      const cat = product as {
+        product_name?: string | null;
+        brand?: string | null;
+        image_url?: string | null;
+        tare_weight_g?: number | null;
+        full_weight_g?: number | null;
+      } | null;
+      const name = cat?.product_name || row.barcode || "Item";
+
+      itemMeta.set(row.id, {
+        id: row.id,
+        shelfId: row.shelf_id,
+        scaleIndex: row.scale_index,
+        name,
+        brand: cat?.brand ?? null,
+        imageUrl: cat?.image_url ?? null,
+        tareG: cat?.tare_weight_g ?? null,
+        fullG: cat?.full_weight_g ?? null,
+        currentG: row.current_weight_g,
+        expiryDate: row.expiry_date,
+        createdAt: (row as { created_at?: string | null }).created_at ?? null,
+      });
+
+      const base: Omit<ActionItem, "daysToExpiry"> = {
+        id: row.id,
+        shelfId: row.shelf_id,
+        shelfName: shelfNameById[row.shelf_id] ?? "Shelf",
+        scaleIndex: row.scale_index,
+        name,
+        imageUrl: cat?.image_url ?? null,
+        currentWeightG: row.current_weight_g,
+        thresholdG: row.low_stock_threshold_g,
+        tareG: cat?.tare_weight_g ?? null,
+        fullG: cat?.full_weight_g ?? null,
+      };
+
+      if (row.expiry_date) {
+        const days = Math.ceil(
+          (new Date(row.expiry_date).getTime() - todayMs) / 86_400_000,
+        );
+        if (days <= EXPIRY_WINDOW_DAYS) {
+          expiring.push({ ...base, daysToExpiry: days });
+        }
+      }
+
+      if (
+        row.low_stock_threshold_g !== null &&
+        row.current_weight_g !== null &&
+        row.current_weight_g <= row.low_stock_threshold_g
+      ) {
+        lowStock.push({ ...base, daysToExpiry: null });
+      }
+    }
+
+    /*
+      Sort: most urgent first. Expiring uses ascending days (already
+      expired = most negative = top). Low stock uses ascending absolute
+      weight (emptiest first).
+    */
+    expiring.sort(
+      (a, b) =>
+        (a.daysToExpiry ?? Number.POSITIVE_INFINITY) -
+        (b.daysToExpiry ?? Number.POSITIVE_INFINITY),
+    );
+    lowStock.sort(
+      (a, b) =>
+        (a.currentWeightG ?? Number.POSITIVE_INFINITY) -
+        (b.currentWeightG ?? Number.POSITIVE_INFINITY),
+    );
+  }
+
+  const expiringTotal = expiring.length;
+  const lowStockTotal = lowStock.length;
+
+  /*
+    ─── Insights pipeline ─────────────────────────────────────────────
+    Streamed: we return the insights as a *Promise* so SvelteKit can
+    flush the synchronous critical-path data (header, "Now" lists,
+    shelves grid) immediately and let the page render with a skeleton
+    over the Insights tab while the five fan-out queries finish. The
+    page <svelte:boundary>s the await so reload-feel is dominated by
+    the fast queries above, not by the heaviest read on the route.
+
+    Note: we snapshot `itemMeta` values into an array up-front so the
+    async closure doesn't iterate a Map that might be GC'd or mutated.
+  */
+  const insightItemIds = Array.from(itemMeta.keys());
+  const itemMetaSnapshot = Array.from(itemMeta.values());
+  const windowMs = insightWindowDays * 86_400_000;
+  const nowMs = Date.now();
+  const windowStart = new Date(nowMs - windowMs);
+  const prevWindowStart = new Date(nowMs - windowMs * 2);
+  const prevWindowEnd = windowStart;
+
+  type Result<T> = { data: T[] | null; error: { message: string } | null };
+
+  const insightsPromise = (async () => {
+    let currentLogsRes: Result<LogRow> = { data: [], error: null };
+    let currentAlertsRes: Result<AlertRow> = { data: [], error: null };
+    let prevLogsRes: Result<LogRow> = { data: [], error: null };
+    let prevAlertsRes: Result<AlertRow> = { data: [], error: null };
+    let prevExpiriesRes: Result<ExpiryRow> = { data: [], error: null };
+
+    if (insightItemIds.length > 0) {
+      [
+        currentLogsRes,
+        currentAlertsRes,
+        prevLogsRes,
+        prevAlertsRes,
+        prevExpiriesRes,
+      ] = await Promise.all([
+        locals.supabase
+          .from("weight_logs")
+          .select("item_id, weight_g, recorded_at")
+          .in("item_id", insightItemIds)
+          .gte("recorded_at", windowStart.toISOString())
+          .order("recorded_at", {
+            ascending: true,
+          }) as unknown as Promise<Result<LogRow>>,
+        locals.supabase
+          .from("alerts")
+          .select("item_id, alert_type, last_triggered_at")
+          .in("item_id", insightItemIds)
+          .eq("alert_type", "low_stock")
+          .gte(
+            "last_triggered_at",
+            windowStart.toISOString(),
+          ) as unknown as Promise<Result<AlertRow>>,
+        locals.supabase
+          .from("weight_logs")
+          .select("item_id, weight_g, recorded_at")
+          .in("item_id", insightItemIds)
+          .gte("recorded_at", prevWindowStart.toISOString())
+          .lt("recorded_at", prevWindowEnd.toISOString())
+          .order("recorded_at", {
+            ascending: true,
+          }) as unknown as Promise<Result<LogRow>>,
+        locals.supabase
+          .from("alerts")
+          .select("item_id, last_triggered_at")
+          .in("item_id", insightItemIds)
+          .eq("alert_type", "low_stock")
+          .gte("last_triggered_at", prevWindowStart.toISOString())
+          .lt(
+            "last_triggered_at",
+            prevWindowEnd.toISOString(),
+          ) as unknown as Promise<Result<AlertRow>>,
+        locals.supabase
+          .from("shelf_items")
+          .select("id, expiry_date, current_weight_g")
+          .in("id", insightItemIds)
+          .gte("expiry_date", prevWindowStart.toISOString().slice(0, 10))
+          .lt(
+            "expiry_date",
+            prevWindowEnd.toISOString().slice(0, 10),
+          ) as unknown as Promise<Result<ExpiryRow>>,
+      ]);
+
+      if (currentLogsRes.error) {
+        console.warn(
+          "[insights] weight_logs query failed:",
+          currentLogsRes.error.message,
+        );
+      }
+    }
+
+    return computeInsights(
+      itemMetaSnapshot,
+      currentLogsRes.data ?? [],
+      currentAlertsRes.data ?? [],
+      prevLogsRes.data ?? [],
+      prevAlertsRes.data ?? [],
+      prevExpiriesRes.data ?? [],
+      insightWindowDays,
+      insightRangeKey,
+    );
+  })();
+
+  const shelvesEnriched = shelvesWithSync.map((s) => {
+    const rollup = shelfRollup[s.id];
+    return {
+      ...s,
+      filledSlots: rollup?.filledSlots ?? 0,
+      totalSlots: SLOTS_PER_SHELF,
+      earliestExpiryDays: rollup?.earliestExpiryDays ?? null,
+      /*
+        Per-slot state for the iOS-folder-style preview on the dashboard.
+        Length SLOTS_PER_SHELF, indexed by scale_index. "empty" means no
+        item in that slot; other values surface urgency so the tile
+        encodes status without a separate text line.
+      */
+      slotStates: Array.from(
+        { length: SLOTS_PER_SHELF },
+        (_, i): "empty" | SlotState =>
+          rollup?.filledSet.has(i)
+            ? (rollup.slotStates.get(i) ?? "normal")
+            : "empty",
+      ),
+    };
+  });
+
   return {
-    shelves: shelvesWithSync,
+    shelves: shelvesEnriched,
     itemShelfMap,
+    firstName,
+    actions: {
+      /*
+        `expiring` / `lowStock` carry everything up to ACTION_LIST_MAX
+        so the client can reveal the rest without an extra round-trip.
+        `limit` is the count shown collapsed; the UI uses it to decide
+        whether to render a "Show all" toggle.
+      */
+      expiring: expiring.slice(0, ACTION_LIST_MAX),
+      lowStock: lowStock.slice(0, ACTION_LIST_MAX),
+      expiringTotal,
+      lowStockTotal,
+      limit: ACTION_LIST_LIMIT,
+      /*
+        Counts broken down by bucket for the inline summary
+        ("3 today, 2 this week" / "running out, low").
+      */
+      expiringBuckets: {
+        expired: expiring.filter((i) => (i.daysToExpiry ?? 0) < 0).length,
+        today: expiring.filter((i) => i.daysToExpiry === 0).length,
+        soon: expiring.filter((i) => (i.daysToExpiry ?? 0) > 0).length,
+      },
+      lowStockBuckets: {
+        empty: lowStock.filter(
+          (i) => i.currentWeightG !== null && i.currentWeightG <= 0,
+        ).length,
+        low: lowStock.filter(
+          (i) => i.currentWeightG === null || i.currentWeightG > 0,
+        ).length,
+      },
+    },
+    /*
+      Streamed: the page renders synchronously around this promise and
+      <svelte:boundary>s the resolution on the client. Resolved value
+      shape is identical to before — pure computational change.
+    */
+    insights: insightsPromise,
   };
 };

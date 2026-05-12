@@ -5,11 +5,56 @@
   import { fly, slide } from 'svelte/transition'
   import { flip } from 'svelte/animate'
   import { quintOut } from 'svelte/easing'
+  import {
+    IconAlertOctagon,
+    IconAlertTriangle,
+    IconBellRinging,
+  } from '@tabler/icons-svelte'
   import type { PageData } from './$types'
 
   let { data }: { data: PageData } = $props()
 
   type Notification = PageData['notifications'][number]
+
+  /*
+    Classify each alert into one of three urgency buckets so the
+    inbox can mirror the dashboard's colour vocabulary. The mapping:
+
+      crit  → red    : expired food / depleted slots (food-safety
+                       or zero-stock — most urgent)
+      warn  → amber  : expires within ≤2 days, or low_stock alert
+      ok    → matcha : everything else (fallback)
+
+    Alert-type strings come in two flavours due to legacy: "LOWSTOCK"
+    (cron + inbox) and "low_stock" (insights). Handle both.
+  */
+  type Urgency = 'crit' | 'warn' | 'ok'
+
+  function classify(n: Notification): Urgency {
+    const type = (n.alertType ?? '').toUpperCase()
+    if (type === 'LOWSTOCK' || type === 'LOW_STOCK') return 'warn'
+    /*
+      Expiry alert: urgency depends on the time delta. If we don't
+      know (no shelf item / no expiry on file), fall back to `warn`
+      since the alert wouldn't have fired without a reason.
+    */
+    const d = n.daysToExpiry
+    if (d === null || d === undefined) return 'warn'
+    if (d < 0) return 'crit'
+    if (d <= 2) return 'warn'
+    return 'ok'
+  }
+
+  function shortLabel(n: Notification): string {
+    const type = (n.alertType ?? '').toUpperCase()
+    if (type === 'LOWSTOCK' || type === 'LOW_STOCK') return 'Low stock'
+    const d = n.daysToExpiry
+    if (d === null || d === undefined) return 'Heads up'
+    if (d < 0) return 'Expired'
+    if (d === 0) return 'Expires today'
+    if (d <= 2) return 'Expiring soon'
+    return 'Expiring'
+  }
 
   /*
     Local mirror of the server-provided list so we can patch it from
@@ -188,8 +233,9 @@
   {:else}
     <ul class="inbox__list">
       {#each list as n (n.id)}
+        {@const u = classify(n)}
         <li
-          class="inbox-item"
+          class="inbox-item inbox-item--{u}"
           class:inbox-item--unread={!n.readAt}
           in:fly|global={{
             y: -8,
@@ -211,17 +257,28 @@
           >
             <input type="hidden" name="id" value={n.id} />
             <button type="submit" class="inbox-item__btn">
-              <span class="inbox-item__dot" aria-hidden="true"></span>
+              <span class="inbox-item__icon" aria-hidden="true">
+                {#if u === 'crit'}
+                  <IconAlertOctagon size={20} stroke={2} />
+                {:else if u === 'warn'}
+                  <IconAlertTriangle size={20} stroke={2} />
+                {:else}
+                  <IconBellRinging size={20} stroke={2} />
+                {/if}
+              </span>
               <span class="inbox-item__body">
                 <span class="inbox-item__message">{n.message}</span>
                 <span class="inbox-item__meta">
-                  <span class="inbox-item__type">{n.alertType}</span>
+                  <span class="inbox-item__type">{shortLabel(n)}</span>
                   <span class="inbox-item__sep">·</span>
                   <span class="inbox-item__time">
                     {formatRelative(n.lastTriggeredAt, now)}
                   </span>
                 </span>
               </span>
+              {#if !n.readAt}
+                <span class="inbox-item__dot" aria-label="Unread"></span>
+              {/if}
             </button>
           </form>
         </li>
@@ -254,7 +311,7 @@
   .inbox__back {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     width: 2.25rem;
     height: 2.25rem;
     font: inherit;
@@ -300,21 +357,38 @@
     gap: 0.5rem;
   }
 
+  /*
+    Each item carries an urgency-coloured icon + left accent stripe.
+    Unread items get a soft tinted background so they stand out at a
+    glance, and an unread dot on the right to mirror common chat /
+    mail patterns. The palette intentionally matches the dashboard
+    tile badges and folder micro-cells for visual cohesion.
+  */
   .inbox-item {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-md);
     transition:
       background 0.15s,
       border-color 0.15s;
   }
 
-  .inbox-item--unread {
-    border-left: 3px solid var(--accent);
+  .inbox-item--crit {
+    --inbox-accent: var(--error, #c0392b);
+    --inbox-tint: rgba(192, 57, 43, 0.07);
+  }
+  .inbox-item--warn {
+    --inbox-accent: var(--warn, #d39e3a);
+    --inbox-tint: rgba(211, 158, 58, 0.09);
+  }
+  .inbox-item--ok {
+    --inbox-accent: var(--matcha, #84a98c);
+    --inbox-tint: rgba(132, 169, 140, 0.1);
   }
 
-  .inbox-item--unread .inbox-item__dot {
-    background: var(--accent);
+  .inbox-item--unread {
+    background: var(--inbox-tint);
+    border-left: 3px solid var(--inbox-accent);
   }
 
   .inbox-item--unread .inbox-item__message {
@@ -325,9 +399,9 @@
     width: 100%;
     background: transparent;
     border: none;
-    padding: 0.85rem 1rem;
+    padding: 0.75rem 0.85rem;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.75rem;
     cursor: pointer;
     text-align: left;
@@ -336,28 +410,45 @@
   }
 
   .inbox-item__btn:hover {
-    background: var(--background);
+    background: rgba(51, 42, 38, 0.03);
   }
 
-  .inbox-item__dot {
+  /*
+    Coloured icon chip — fills with the accent for unread items
+    (loud), softens to a tinted background with the accent as the
+    glyph colour for read items (quiet). Keeps the page from looking
+    like a wall of red even when there's a backlog.
+  */
+  .inbox-item__icon {
     flex-shrink: 0;
-    width: 0.45rem;
-    height: 0.45rem;
+    width: 2.25rem;
+    height: 2.25rem;
     border-radius: 50%;
-    background: transparent;
-    margin-top: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--inbox-tint);
+    color: var(--inbox-accent);
+    transition:
+      background 0.15s,
+      color 0.15s;
+  }
+
+  .inbox-item--unread .inbox-item__icon {
+    background: var(--inbox-accent);
+    color: #fff;
   }
 
   .inbox-item__body {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
     flex: 1;
     min-width: 0;
   }
 
   .inbox-item__message {
-    line-height: 1.4;
+    line-height: 1.35;
     font-size: 0.95rem;
   }
 
@@ -365,16 +456,32 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.7rem;
-    opacity: 0.55;
+    font-size: 0.72rem;
+    opacity: 0.6;
   }
 
   .inbox-item__type {
-    text-transform: lowercase;
-    letter-spacing: 0.04em;
+    color: var(--inbox-accent);
+    font-weight: 600;
+    opacity: 0.85;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .inbox-item__sep {
     opacity: 0.6;
+  }
+
+  /*
+    Unread dot at the right edge — small, accent-coloured, the
+    classic "you haven't seen this" affordance. Hidden once read.
+  */
+  .inbox-item__dot {
+    flex-shrink: 0;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: var(--inbox-accent);
+    margin-left: 0.25rem;
   }
 </style>

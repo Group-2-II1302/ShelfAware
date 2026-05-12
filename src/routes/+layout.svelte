@@ -4,9 +4,9 @@
   import { invalidate } from '$app/navigation'
   import { onMount } from 'svelte'
 
-  import Navbar from '$lib/components/Navbar.svelte'
   import Menu from '$lib/components/Menu.svelte'
   import AlertsListener from '$lib/components/AlertsListener.svelte'
+  import NavigationProgress from '$lib/components/NavigationProgress.svelte'
 
   let { data, children } = $props()
   let { supabase, claims, unreadAlertCount, hideAppChrome } = $derived(data)
@@ -25,9 +25,7 @@
   <link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if !hideAppChrome}
-  <Navbar />
-{/if}
+<NavigationProgress />
 
 {@render children()}
 

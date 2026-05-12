@@ -1,8 +1,36 @@
 <script lang="ts">
   import { enhance }   from '$app/forms'
-  import { goto }      from '$app/navigation'
+  import { goto, replaceState }      from '$app/navigation'
   import { page }      from '$app/stores'
+  import { onMount }   from 'svelte'
   import BarcodeScanner from '$lib/components/BarcodeScanner.svelte'
+  import ShelfSlotPicker from '$lib/components/ShelfSlotPicker.svelte'
+  import { setLastShelfId } from '$lib/scan/lastShelf'
+  import type { PageData } from './$types'
+
+  let { data }: { data: PageData } = $props()
+
+  /*
+    Persist the shelf the user is scanning into so /scan-item can
+    fast-path past the picker next time. Done on entry so the cache
+    captures the user's intent even if they abandon the scan halfway.
+  */
+  onMount(() => {
+    if (data.shelf_id) setLastShelfId(data.shelf_id)
+  })
+
+  function handleSlotPickerChange(next: {
+    shelfId: string
+    slot: number
+    replace: boolean
+  }) {
+    const params = new URLSearchParams($page.url.searchParams)
+    params.set('shelf_id', next.shelfId)
+    params.set('slot', String(next.slot))
+    params.set('replace', next.replace ? '1' : '0')
+    setLastShelfId(next.shelfId)
+    replaceState(`?${params.toString()}`, {})
+  }
 
   // ── URL context ─────────────────────────────────────────────────────────────
   // shelf_id and slot are mandatory. Without them we cannot write to shelf_items.
@@ -252,6 +280,19 @@
 
 <div class="scan-page">
 
+  <div class="scan-page__top">
+    <a class="scan-page__back" href="/scan-item" aria-label="Back">←</a>
+    {#if urlParamsValid && data.shelves && data.shelves.length > 0}
+      <ShelfSlotPicker
+        shelves={data.shelves}
+        slotsByShelf={data.slotsByShelf}
+        shelfId={shelf_id}
+        slot={scale_index}
+        onChange={handleSlotPickerChange}
+      />
+    {/if}
+  </div>
+
   {#if !urlParamsValid}
     <div class="error-card">
       <p class="error-title">Invalid shelf configuration</p>
@@ -269,9 +310,11 @@
          OpenFoodFacts (or the network failed). Let the user choose how
          to proceed instead of dumping them into the manual form. -->
     <div class="page-header">
-      <h1>Product Not Found</h1>
+      <h1>Product not found</h1>
       <p class="slot-label">
-        Shelf <strong>{shelf_id}</strong> / Slot <strong>{slot}</strong>
+        <strong>{data.shelfName ?? 'Unknown shelf'}</strong>
+        <span class="slot-label__sep">·</span>
+        Slot {slot}
       </p>
     </div>
 
@@ -314,10 +357,26 @@
 
   {:else if !foundProduct?.product_name && !isFetching}
     <div class="page-header">
-      <h1>{replaceMode ? 'Replace Product' : 'Register Product'}</h1>
+      <h1>
+        {#if manualEntryBarcode}
+          Enter product details
+        {:else if replaceMode}
+          Scan a new barcode
+        {:else}
+          Scan a barcode
+        {/if}
+      </h1>
       <p class="slot-label">
-        Shelf <strong>{shelf_id}</strong> / Slot <strong>{slot}</strong>
+        <strong>{data.shelfName ?? 'Unknown shelf'}</strong>
+        <span class="slot-label__sep">·</span>
+        Slot {slot}
       </p>
+      {#if !manualEntryBarcode}
+        <p class="scan-hint">
+          Point your camera at the product's barcode. Can't scan? Switch to
+          manual entry below.
+        </p>
+      {/if}
       {#if replaceMode}
         <p class="replace-hint">
           Scanning will replace whatever is currently in this slot.
@@ -340,9 +399,11 @@
     <!-- Confirmation step: show what we found from OpenFoodFacts and let
          the user confirm or rescan before we commit anything. -->
     <div class="page-header">
-      <h1>{replaceMode ? 'Confirm Replacement' : 'Confirm Product'}</h1>
+      <h1>{replaceMode ? 'Confirm replacement' : 'Confirm product'}</h1>
       <p class="slot-label">
-        Shelf <strong>{shelf_id}</strong> / Slot <strong>{slot}</strong>
+        <strong>{data.shelfName ?? 'Unknown shelf'}</strong>
+        <span class="slot-label__sep">·</span>
+        Slot {slot}
       </p>
     </div>
 
@@ -460,8 +521,37 @@
 <style>
   .scan-page {
     max-width: 500px;
-    margin: auto;
-    padding: 1rem;
+    margin: 0 auto;
+    padding: 1.25rem 1rem 5rem;
+  }
+
+  .scan-page__top {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .scan-page__back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 2.25rem;
+    height: 2.25rem;
+    font: inherit;
+    font-size: 1rem;
+    line-height: 1;
+    color: var(--text);
+    text-decoration: none;
+    flex-shrink: 0;
+  }
+
+  .scan-page__back:hover {
+    background: var(--background);
   }
 
   .page-header {
@@ -469,22 +559,44 @@
   }
 
   .page-header h1 {
-    margin: 0 0 0.25rem;
+    margin: 0 0 0.3rem;
     font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
   .slot-label {
     margin: 0;
+    font-size: 0.88rem;
+    color: var(--text);
+    opacity: 0.7;
+  }
+
+  .slot-label strong {
+    font-weight: 600;
+    opacity: 1;
+  }
+
+  .slot-label__sep {
+    margin: 0 0.4rem;
+    opacity: 0.5;
+  }
+
+  .scan-hint {
+    margin: 0.6rem 0 0;
     font-size: 0.85rem;
-    color: #71717a;
+    color: var(--text);
+    opacity: 0.75;
+    line-height: 1.4;
   }
 
   .replace-hint {
-    margin: 0.5rem 0 0;
+    margin: 0.6rem 0 0;
     font-size: 0.85rem;
-    color: #b45309;
-    background: #fef3c7;
-    border-radius: 0.5rem;
+    color: var(--text);
+    background: var(--warn-soft);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius-sm);
     padding: 0.5rem 0.75rem;
   }
 
@@ -492,78 +604,96 @@
   .status-card {
     text-align: center;
     padding: 3rem 1rem;
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 1px 2px rgba(51, 42, 38, 0.04);
   }
 
   .status-msg {
-    color: #52525b;
-    font-size: 1rem;
+    color: var(--text);
+    opacity: 0.7;
+    font-size: 0.95rem;
+    margin: 0;
   }
 
   /* ── Error / notice cards ────────────────────────────────────────────────── */
   .error-card {
-    padding: 1.5rem;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 10px;
+    padding: 1.25rem;
+    background: #fbecec;
+    border-left: 3px solid var(--error);
+    border-radius: var(--radius-md);
     margin-bottom: 1rem;
   }
 
   .error-title {
     font-weight: 600;
-    color: #dc2626;
-    margin: 0 0 0.5rem;
+    color: var(--error);
+    margin: 0 0 0.4rem;
   }
 
   .error-body {
-    color: #7f1d1d;
+    color: var(--text);
     font-size: 0.9rem;
-    margin: 0 0 0.5rem;
+    margin: 0 0 0.4rem;
+    line-height: 1.4;
   }
 
   .error-detail {
     font-size: 0.8rem;
-    color: #991b1b;
+    color: var(--text);
+    opacity: 0.65;
     margin: 0;
   }
 
   .notice-card {
-    padding: 0.75rem 1rem;
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    border-radius: 8px;
-    color: #92400e;
-    font-size: 0.875rem;
+    padding: 0.7rem 0.9rem;
+    background: var(--warn-soft);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 0.88rem;
     margin-bottom: 0.75rem;
   }
 
   .btn-retry {
     margin-top: 1rem;
-    padding: 10px 24px;
-    background: #6366f1;
-    color: white;
+    padding: 0.65rem 1.25rem;
+    background: var(--text);
+    color: var(--background);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-pill);
+    font: inherit;
     font-weight: 600;
+    font-size: 0.92rem;
     cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+
+  .btn-retry:hover {
+    background: #1f1916;
+  }
+
+  .btn-retry:active {
+    transform: translateY(1px);
   }
 
   /* ── Confirmation card ───────────────────────────────────────────────────── */
   .confirm-card {
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     padding: 1.25rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    box-shadow: 0 1px 2px rgba(51, 42, 38, 0.04);
   }
 
   .confirm-card__image {
     width: 100%;
     max-height: 220px;
     object-fit: contain;
-    border-radius: 8px;
-    background: #f4f4f5;
+    border-radius: var(--radius-md);
+    background: var(--background);
   }
 
   .confirm-card__body {
@@ -631,41 +761,52 @@
 
   .confirm-card__actions {
     display: flex;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
+    gap: 0.6rem;
+    margin-top: 0.25rem;
   }
 
   .confirm-card__actions .btn-primary,
   .confirm-card__actions .btn-secondary {
     flex: 1;
-    padding: 0.65rem 0.75rem;
-    border-radius: 8px;
+    padding: 0.7rem 0.9rem;
+    border-radius: var(--radius-pill);
     font: inherit;
     font-weight: 600;
+    font-size: 0.92rem;
     cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
   }
 
   .confirm-card__actions .btn-primary {
-    background: var(--accent);
-    color: var(--accent-contrast);
-    border: 1px solid var(--accent);
+    background: var(--text);
+    color: var(--background);
+    border: none;
+  }
+
+  .confirm-card__actions .btn-primary:hover {
+    background: #1f1916;
+  }
+
+  .confirm-card__actions .btn-primary:active,
+  .confirm-card__actions .btn-secondary:active {
+    transform: translateY(1px);
   }
 
   .confirm-card__actions .btn-secondary {
-    background: var(--surface);
+    background: var(--background);
     color: var(--text);
     border: 1px solid var(--border);
   }
 
-  .btn-retry:hover {
-    background: #4f46e5;
+  .confirm-card__actions .btn-secondary:hover {
+    background: var(--matcha-soft);
   }
 
   code {
-    font-family: monospace;
-    background: #f4f4f5;
-    padding: 1px 4px;
-    border-radius: 3px;
+    font-family: "Cascadia Mono", monospace;
+    background: var(--background);
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
     font-size: 0.85em;
   }
 </style>

@@ -9,11 +9,33 @@
   --success-border: #b8d4b8;
   --accent: #332A26;
   --accent-contrast: #F4F1F0;
+
+  /* Brand + status palette layered on top of the warm-brown base. */
+  --matcha: #7a8b3f;
+  --matcha-soft: #e3e7d4;
+  --matcha-deep: #5d6a2f;
+  --warn: #c28a2f;
+  --warn-soft: #fbf3e1;
+  --info: #4b7b8a;
+
+  /* iOS-style rounded corner scale. Use these instead of raw px values
+     so the whole app can be re-tuned from one place. */
+  --radius-xs: 6px;    /* chips, small badges */
+  --radius-sm: 10px;   /* buttons, inputs */
+  --radius-md: 14px;   /* cards */
+  --radius-lg: 20px;   /* large containers, sheets */
+  --radius-xl: 28px;   /* hero / featured surfaces */
+  --radius-pill: 999px;
 }
 
 * {
   font-family: "Cascadia Mono", monospace;
   color: var(--text);
+}
+
+html,
+body {
+  margin: 0;
 }
 
 body {
@@ -25,25 +47,27 @@ body {
   display: contents;
 }
 
-.navbar {
-  display: flex;
-  padding: 10px;
-  align-items: center;
-}
-
-.navbar-brand {
-  margin: 0 auto;
-  font-family: monospace;
-}
-
-.navbar-profile {
-  display: flex;
-  align-items: center;
-}
-
 #menu {
-  background: rgba(255, 255, 255, 0.6);
-  width: 320px;
+  /*
+    Solid creamy tint that sits between --background (#F4F1F0) and
+    --surface (#fff) so the pill stands out from the page without
+    looking like a stark white slab. Hairline border softens the edge,
+    layered shadow keeps it floating without looking heavy.
+  */
+  background: #FBF8F5;
+  border: 1px solid rgba(51, 42, 38, 0.06);
+  box-shadow:
+    0 10px 30px rgba(51, 42, 38, 0.10),
+    0 2px 6px rgba(51, 42, 38, 0.06);
+  /*
+    Sized for 5 nav items with a generous tap target each (~3rem
+    square including padding), but bounded by the viewport with a
+    1rem inset so it never bleeds off-screen on the narrowest phones.
+    Width-content lets a future 6th item just work without another
+    edit here.
+  */
+  width: max-content;
+  max-width: calc(100vw - 2rem);
   display: flex;
   border-radius: 100px;
   justify-items: center;
@@ -53,31 +77,15 @@ body {
   transform: translateX(-50%);
 }
 #menu ul {
-  padding: 10px;
+  padding: 8px;
   margin: 0;
   display: flex;
   justify-content: space-between;
+  gap: 0.25rem;
 }
 #menu li {
   list-style: none;
-  padding: 20px;
-}
-
-.shelf-list {
-  list-style: none;
-  padding: 0;
-}
-
-.shelf-list__item {
-  border: 1px solid var(--border);
-  padding: 10px;
-  margin: 10px 0;
-}
-
-.shelf-list__link {
-  text-decoration: none;
-  color: inherit;
-  display: block;
+  padding: 0.6rem 0.85rem;
 }
 
 .auth-main {
@@ -93,7 +101,7 @@ body {
   max-width: 24rem;
   padding: 1.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
@@ -112,7 +120,7 @@ body {
   padding: 0.65rem 0.75rem;
   background: var(--success-bg);
   border: 1px solid var(--success-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.875rem;
 }
 
@@ -136,7 +144,7 @@ body {
 .input {
   padding: 0.5rem 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font: inherit;
 }
 
@@ -157,7 +165,7 @@ body {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--accent-contrast);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .btn-primary:disabled {
@@ -178,7 +186,7 @@ body {
   border: 1px solid #dadce0;
   background: #ffffff;
   color: #3c4043;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: background-color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
@@ -234,7 +242,7 @@ body {
   cursor: pointer;
   padding: 0.45rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
 }
 
