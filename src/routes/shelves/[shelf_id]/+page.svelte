@@ -768,6 +768,10 @@
   -->
   {#await data.insights}
     <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights insights--loading" aria-busy="true">
+      <p class="insights__intro">
+        Trends scoped to this shelf. Use the time range to compare
+        windows; arrows show change vs the previous period.
+      </p>
       <div class="range-toggle range-toggle--skeleton" aria-hidden="true">
         <span class="skeleton-chip"></span>
         <span class="skeleton-chip"></span>
@@ -793,6 +797,10 @@
   {:then ins}
   {@const sparse = ins.daysOfHistory < ins.minDataDays}
   <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
+    <p class="insights__intro">
+      Trends scoped to this shelf. Use the time range to compare
+      windows; arrows show change vs the previous period.
+    </p>
     <div class="range-toggle" role="group" aria-label="Time range">
       {#each ins.availableRanges as r (r)}
         <button
@@ -1805,6 +1813,17 @@
     display: flex;
     flex-direction: column;
     gap: 0.85rem;
+  }
+
+  /*
+    Quiet orientation line at the top of the Insights panel — mirrors
+    the dashboard's variant so the two read as the same surface.
+  */
+  .insights__intro {
+    margin: 0 0 -0.25rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    opacity: 0.65;
   }
 
   .range-toggle {

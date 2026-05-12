@@ -18,6 +18,7 @@
     IconAlertTriangle,
     IconTrash,
     IconPackage,
+    IconInfoCircle,
   } from '@tabler/icons-svelte'
 
   let { data }: { data: PageData } = $props()
@@ -47,6 +48,24 @@
   }
 
   let activeTab = $state<Tab>(resolveInitialTab())
+
+  /*
+    Color-legend popover for the shelves grid. Toggled by the small
+    info icon next to the "Shelves" heading. Closes on outside click
+    and Escape so it never gets stuck open on mobile where there's
+    no hover-out.
+  */
+  let legendOpen = $state(false)
+  let legendRoot = $state<HTMLDivElement | undefined>(undefined)
+
+  function handleLegendDocClick(e: MouseEvent) {
+    if (!legendOpen) return
+    const root = legendRoot
+    if (root && !root.contains(e.target as Node)) legendOpen = false
+  }
+  function handleLegendDocKey(e: KeyboardEvent) {
+    if (legendOpen && e.key === 'Escape') legendOpen = false
+  }
 
   /*
     Drives the soft right-edge fade on the "Now" carousels. Toggles
@@ -294,11 +313,23 @@
         () => scheduleRefresh(2_500),
       )
       .subscribe()
+
+    document.addEventListener('click', handleLegendDocClick)
+    document.addEventListener('keydown', handleLegendDocKey)
   })
 
   onDestroy(() => {
     if (invalidateTimer) clearTimeout(invalidateTimer)
     if (channel) channel.unsubscribe()
+    /*
+      `onDestroy` also fires on the server during SSR teardown,
+      where `document` doesn't exist. Guard so we don't trip a
+      ReferenceError on first render.
+    */
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('click', handleLegendDocClick)
+      document.removeEventListener('keydown', handleLegendDocKey)
+    }
   })
 
   function greeting(): string {
@@ -603,7 +634,64 @@
   </section>
 
   <section class="shelves" aria-labelledby="shelves-heading">
-    <h2 id="shelves-heading" class="section-title">Shelves</h2>
+    <div class="shelves__heading">
+      <h2 id="shelves-heading" class="section-title">Shelves</h2>
+      <div class="legend" bind:this={legendRoot}>
+        <button
+          type="button"
+          class="legend__trigger"
+          aria-label="Show colour legend"
+          aria-expanded={legendOpen}
+          aria-controls="shelves-legend"
+          onclick={(e) => {
+            e.stopPropagation()
+            legendOpen = !legendOpen
+          }}
+        >
+          <IconInfoCircle size={18} stroke={1.75} />
+        </button>
+        {#if legendOpen}
+          <div
+            id="shelves-legend"
+            class="legend__panel"
+            role="dialog"
+            aria-label="What the slot colours mean"
+          >
+            <p class="legend__title">Slot colours</p>
+            <ul class="legend__list">
+              <li>
+                <span class="legend__swatch legend__swatch--ok" aria-hidden="true"></span>
+                <div>
+                  <strong>Stocked</strong>
+                  <span class="legend__hint">Has product, not expiring soon</span>
+                </div>
+              </li>
+              <li>
+                <span class="legend__swatch legend__swatch--warn" aria-hidden="true"></span>
+                <div>
+                  <strong>Heads up</strong>
+                  <span class="legend__hint">Running low or expires within 2 days</span>
+                </div>
+              </li>
+              <li>
+                <span class="legend__swatch legend__swatch--crit" aria-hidden="true"></span>
+                <div>
+                  <strong>Act now</strong>
+                  <span class="legend__hint">Expired or fully consumed</span>
+                </div>
+              </li>
+              <li>
+                <span class="legend__swatch legend__swatch--empty" aria-hidden="true"></span>
+                <div>
+                  <strong>Empty slot</strong>
+                  <span class="legend__hint">No item assigned</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+        {/if}
+      </div>
+    </div>
 
     <ul
       class="folder-grid"
@@ -672,6 +760,10 @@
   -->
   {#await data.insights}
     <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights insights--loading" aria-busy="true">
+      <p class="insights__intro">
+        Trends from your weight history. Use the time range to compare
+        windows; arrows show change vs the previous period.
+      </p>
       <div class="range-toggle range-toggle--skeleton" aria-hidden="true">
         <span class="skeleton-chip"></span>
         <span class="skeleton-chip"></span>
@@ -698,6 +790,10 @@
   {:then ins}
   {@const sparse = ins.daysOfHistory < ins.minDataDays}
   <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
+    <p class="insights__intro">
+      Trends from your weight history. Use the time range to compare
+      windows; arrows show change vs the previous period.
+    </p>
     <div class="range-toggle" role="group" aria-label="Time range">
       {#each ins.availableRanges as r (r)}
         <button
@@ -1038,6 +1134,19 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /*
+    Quiet orientation line at the top of the Insights panel. Tells
+    first-time users what they're looking at without taking up the
+    visual weight of a full card. Sits above the range toggle so
+    it's the first thing read.
+  */
+  .insights__intro {
+    margin: 0 0 -0.25rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    opacity: 0.65;
   }
 
   /* ── Range toggle ────────────────────────────────────────────────── */
@@ -1834,6 +1943,135 @@
 
   .shelves {
     margin-top: 1rem;
+  }
+
+  /*
+    Heading row pairs the section title with the legend trigger.
+    Keeping them on one flex row means the (i) sits inline with the
+    title without disturbing the section's existing vertical rhythm.
+  */
+  .shelves__heading {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+  }
+  .shelves__heading .section-title {
+    margin: 0;
+  }
+
+  /*
+    Legend popover. `position: relative` on the wrapper anchors the
+    absolutely-positioned panel; outside-click + Escape dismiss are
+    handled in the script. Panel is right-anchored so it doesn't
+    overflow on narrow screens.
+  */
+  .legend {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .legend__trigger {
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.55;
+    padding: 0.15rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    cursor: pointer;
+    transition:
+      opacity 0.15s ease,
+      background 0.15s ease;
+  }
+
+  .legend__trigger:hover,
+  .legend__trigger:focus-visible,
+  .legend__trigger[aria-expanded='true'] {
+    opacity: 1;
+    background: rgba(51, 42, 38, 0.06);
+  }
+
+  .legend__panel {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 20;
+    min-width: 15rem;
+    max-width: min(20rem, calc(100vw - 2rem));
+    padding: 0.85rem 0.95rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  .legend__title {
+    margin: 0 0 0.55rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0.6;
+  }
+
+  .legend__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .legend__list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    font-size: 0.85rem;
+    line-height: 1.3;
+  }
+
+  .legend__list strong {
+    display: block;
+    font-weight: 600;
+  }
+
+  .legend__hint {
+    display: block;
+    font-size: 0.75rem;
+    opacity: 0.65;
+  }
+
+  /*
+    Swatches mirror the actual folder-cell styling so the popover
+    can't drift out of sync. If the folder palette changes, update
+    these in lockstep.
+  */
+  .legend__swatch {
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    border-radius: var(--radius-xs, 4px);
+    margin-top: 0.1rem;
+  }
+  .legend__swatch--ok {
+    background: var(--matcha);
+    border: 1px solid var(--matcha-deep);
+  }
+  .legend__swatch--warn {
+    background: var(--warn);
+    border: 1px solid var(--warn);
+  }
+  .legend__swatch--crit {
+    background: var(--error, #c0392b);
+    border: 1px solid var(--error, #c0392b);
+  }
+  .legend__swatch--empty {
+    background: transparent;
+    border: 1px dashed rgba(51, 42, 38, 0.4);
   }
 
   /* ── Folder-style shelf grid ────────────────────────────────────────── */
