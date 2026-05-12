@@ -46,6 +46,12 @@
     formData.barcode = prefilledBarcode;
   });
 
+  const scanConfig = {
+    fps: 25,
+    qrbox: { width: 250, height: 150 },
+    aspectRatio: 1.777778,
+  };
+
   async function startScanner() {
     if (isStarted || isInitializing || stopping) return;
 
@@ -58,23 +64,61 @@
         scanner = new Html5Qrcode(readerElement.id);
       }
 
-      if (scanner) {
-        await scanner.start(
-          { facingMode: 'environment' },
-          {
-            fps: 25,
-            qrbox: { width: 250, height: 150 },
-            aspectRatio: 1.777778
-          },
-          onScanSuccess,
-          onScanFailure
-        );
+      if (!scanner) return;
 
-        isStarted = true;
+      const tried = await tryStartBarcodeScanner(scanner);
+      if (!tried.ok) {
+        errorMessage =
+          tried.message ??
+          'Could not start the camera. Allow camera access in system settings and try again.';
+        return;
       }
+
+      isStarted = true;
     } finally {
       isInitializing = false;
     }
+  }
+
+  /** Prefer enumerated cameras (reliable in Capacitor WebView); fall back to facingMode. */
+  async function tryStartBarcodeScanner(qr: Html5Qrcode): Promise<{ ok: true } | { ok: false; message?: string }> {
+    try {
+      const devices = await Html5Qrcode.getCameras();
+      const preferred =
+        devices.find((d) => /back|rear|environment/i.test(d.label)) ?? devices[0];
+
+      if (preferred) {
+        await qr.start(preferred.id, scanConfig, onScanSuccess, onScanFailure);
+        return { ok: true };
+      }
+    } catch {
+      /* fall through */
+    }
+
+    const fallbacks: MediaTrackConstraints[] = [
+      { facingMode: 'environment' },
+      { facingMode: 'user' },
+      {},
+    ];
+
+    let lastMessage: string | undefined;
+
+    for (const cam of fallbacks) {
+      try {
+        await qr.start(cam, scanConfig, onScanSuccess, onScanFailure);
+        return { ok: true };
+      } catch (e) {
+        lastMessage = e instanceof Error ? e.message : String(e);
+        try {
+          await qr.stop();
+          await qr.clear();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    return { ok: false, message: lastMessage };
   }
 
   async function stopScanner() {
@@ -154,6 +198,9 @@
   {#if mode === 'scan'}
     {#if !isStarted}
       <div class="overlay">
+        {#if errorMessage}
+          <p class="error-banner" role="alert">{errorMessage}</p>
+        {/if}
         <div class="button-group">
           <button onclick={startScanner} disabled={isInitializing} class="btn-primary">
             {isInitializing ? 'Initialising...' : 'Start Scanner'}
@@ -204,6 +251,18 @@
   .overlay {
     position: absolute; inset: 0; display: flex; flex-direction: column; 
     align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.85); padding: 20px; z-index: 10;
+  }
+  .error-banner {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    max-width: 280px;
+    text-align: center;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    color: #fecaca;
+    background: rgba(127, 29, 29, 0.55);
+    border-radius: 8px;
+    border: 1px solid rgba(248, 113, 113, 0.45);
   }
   .manual-view { position: absolute; inset: 0; background: #1a1a1a; overflow-y: auto; padding: 20px; z-index: 20; }
   .manual-form { display: flex; flex-direction: column; gap: 12px; }
