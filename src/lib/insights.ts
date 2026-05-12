@@ -327,9 +327,7 @@ export function computeInsights(
   }
 
   const daysOfHistory =
-    earliestLog === null
-      ? 0
-      : Math.floor((nowMs - earliestLog) / 86_400_000);
+    earliestLog === null ? 0 : Math.floor((nowMs - earliestLog) / 86_400_000);
 
   return {
     range: rangeKey,

@@ -31,7 +31,6 @@ export function formatExpiredAgo(expiryDate: string): string {
 export function formatDelta(pct: number): string {
   if (Math.abs(pct) < 1) return "≈ same";
   const sign = pct > 0 ? "+" : "";
-  const value =
-    Math.abs(pct) > 999 ? (pct > 0 ? 999 : -999) : Math.round(pct);
+  const value = Math.abs(pct) > 999 ? (pct > 0 ? 999 : -999) : Math.round(pct);
   return `${sign}${value}%`;
 }

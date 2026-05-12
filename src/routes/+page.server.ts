@@ -266,15 +266,13 @@ export const load: PageServerLoad = async ({ locals, depends, url }) => {
       const product = Array.isArray(row.product_catalog)
         ? row.product_catalog[0]
         : row.product_catalog;
-      const cat = product as
-        | {
-            product_name?: string | null;
-            brand?: string | null;
-            image_url?: string | null;
-            tare_weight_g?: number | null;
-            full_weight_g?: number | null;
-          }
-        | null;
+      const cat = product as {
+        product_name?: string | null;
+        brand?: string | null;
+        image_url?: string | null;
+        tare_weight_g?: number | null;
+        full_weight_g?: number | null;
+      } | null;
       const name = cat?.product_name || row.barcode || "Item";
 
       itemMeta.set(row.id, {

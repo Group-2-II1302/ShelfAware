@@ -142,10 +142,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     console.error("[shopping] failed to load shelf items", shelfItemsRes.error);
   }
   if (dismissalsRes.error) {
-    console.error(
-      "[shopping] failed to load dismissals",
-      dismissalsRes.error,
-    );
+    console.error("[shopping] failed to load dismissals", dismissalsRes.error);
   }
 
   const items = (itemsRes.data ?? []) as unknown as ShoppingRow[];
@@ -320,16 +317,14 @@ export const actions: Actions = {
 
     const nextPosition = (tail?.position ?? 0) + 1;
 
-    const { error } = await locals.supabase
-      .from("shopping_list_items")
-      .insert({
-        shelf_id: shelfId,
-        name,
-        quantity,
-        unit,
-        source_reason: "manual",
-        position: nextPosition,
-      });
+    const { error } = await locals.supabase.from("shopping_list_items").insert({
+      shelf_id: shelfId,
+      name,
+      quantity,
+      unit,
+      source_reason: "manual",
+      position: nextPosition,
+    });
 
     if (error) {
       console.error("[shopping] addItem failed", error);
@@ -504,15 +499,13 @@ export const actions: Actions = {
       .maybeSingle();
     const nextPosition = (tail?.position ?? 0) + 1;
 
-    const { error } = await locals.supabase
-      .from("shopping_list_items")
-      .insert({
-        shelf_id: shelfId,
-        name,
-        source_item_id: sourceItemId,
-        source_reason: reason,
-        position: nextPosition,
-      });
+    const { error } = await locals.supabase.from("shopping_list_items").insert({
+      shelf_id: shelfId,
+      name,
+      source_item_id: sourceItemId,
+      source_reason: reason,
+      position: nextPosition,
+    });
 
     if (error && error.code !== "23505") {
       console.error("[shopping] addFromSource failed", error);

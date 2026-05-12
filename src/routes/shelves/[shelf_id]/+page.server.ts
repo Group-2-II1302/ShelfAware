@@ -54,7 +54,12 @@ type EmptySlot = {
 
 export type ShelfSlot = FilledSlot | EmptySlot;
 
-export const load: PageServerLoad = async ({ locals, params, depends, url }) => {
+export const load: PageServerLoad = async ({
+  locals,
+  params,
+  depends,
+  url,
+}) => {
   /*
     Tag this load so realtime weight_logs events on the client can
     refresh the shelf without nuking unrelated cached data.
@@ -211,8 +216,7 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
       fullG: catalog?.full_weight_g ?? null,
       currentG: currentWeightG,
       expiryDate: item.expiry_date,
-      createdAt:
-        (item as { created_at?: string | null }).created_at ?? null,
+      createdAt: (item as { created_at?: string | null }).created_at ?? null,
     });
   }
 
@@ -263,7 +267,10 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
     (the five heavy insights queries + utilization sample) streams
     via the Promise we return below.
   */
-  let lastLogRes: { data: { recorded_at: string } | null; error: { message: string } | null } = {
+  let lastLogRes: {
+    data: { recorded_at: string } | null;
+    error: { message: string } | null;
+  } = {
     data: null,
     error: null,
   };
@@ -282,7 +289,10 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
     // surface "Never connected" so the rest of the shelf still
     // renders. Most likely cause is a missing SELECT RLS policy
     // on weight_logs for shelf members.
-    console.warn("[shelf load] weight_logs query failed:", lastLogRes.error.message);
+    console.warn(
+      "[shelf load] weight_logs query failed:",
+      lastLogRes.error.message,
+    );
   }
 
   /*
@@ -291,11 +301,16 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
   */
   const itemMetaSnapshot = Array.from(itemMeta.values());
   const itemIdToSlot = new Map<string, number>();
-  for (const meta of itemMetaSnapshot) itemIdToSlot.set(meta.id, meta.scaleIndex);
+  for (const meta of itemMetaSnapshot)
+    itemIdToSlot.set(meta.id, meta.scaleIndex);
   const currentItemMetaSize = itemMeta.size;
 
   const insightsPromise = (async () => {
-    let utilLogsRes: Result<{ item_id: string; recorded_at: string; weight_g: number }> = {
+    let utilLogsRes: Result<{
+      item_id: string;
+      recorded_at: string;
+      weight_g: number;
+    }> = {
       data: [],
       error: null,
     };
@@ -319,33 +334,46 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
           .select("item_id, weight_g, recorded_at")
           .in("item_id", itemIds)
           .gte("recorded_at", windowStart.toISOString())
-          .order("recorded_at", { ascending: true }) as unknown as Promise<Result<LogRow>>,
+          .order("recorded_at", { ascending: true }) as unknown as Promise<
+          Result<LogRow>
+        >,
         locals.supabase
           .from("alerts")
           .select("item_id, alert_type, last_triggered_at")
           .in("item_id", itemIds)
           .eq("alert_type", "low_stock")
-          .gte("last_triggered_at", windowStart.toISOString()) as unknown as Promise<Result<AlertRow>>,
+          .gte(
+            "last_triggered_at",
+            windowStart.toISOString(),
+          ) as unknown as Promise<Result<AlertRow>>,
         locals.supabase
           .from("weight_logs")
           .select("item_id, weight_g, recorded_at")
           .in("item_id", itemIds)
           .gte("recorded_at", prevWindowStart.toISOString())
           .lt("recorded_at", prevWindowEnd.toISOString())
-          .order("recorded_at", { ascending: true }) as unknown as Promise<Result<LogRow>>,
+          .order("recorded_at", { ascending: true }) as unknown as Promise<
+          Result<LogRow>
+        >,
         locals.supabase
           .from("alerts")
           .select("item_id, last_triggered_at")
           .in("item_id", itemIds)
           .eq("alert_type", "low_stock")
           .gte("last_triggered_at", prevWindowStart.toISOString())
-          .lt("last_triggered_at", prevWindowEnd.toISOString()) as unknown as Promise<Result<AlertRow>>,
+          .lt(
+            "last_triggered_at",
+            prevWindowEnd.toISOString(),
+          ) as unknown as Promise<Result<AlertRow>>,
         locals.supabase
           .from("shelf_items")
           .select("id, expiry_date, current_weight_g")
           .in("id", itemIds)
           .gte("expiry_date", prevWindowStart.toISOString().slice(0, 10))
-          .lt("expiry_date", prevWindowEnd.toISOString().slice(0, 10)) as unknown as Promise<Result<ExpiryRow>>,
+          .lt(
+            "expiry_date",
+            prevWindowEnd.toISOString().slice(0, 10),
+          ) as unknown as Promise<Result<ExpiryRow>>,
         /*
           Utilization sparkline. Sample weight logs across both windows
           (previous + current) so the chart has continuity at the
@@ -398,7 +426,8 @@ export const load: PageServerLoad = async ({ locals, params, depends, url }) => 
     }
     const utilizationAvg =
       utilizationSeries.length > 0
-        ? utilizationSeries.reduce((s, v) => s + v, 0) / utilizationSeries.length
+        ? utilizationSeries.reduce((s, v) => s + v, 0) /
+          utilizationSeries.length
         : 0;
     const utilization = {
       series: utilizationSeries,
