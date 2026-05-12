@@ -35,5 +35,6 @@ export const load: LayoutServerLoad = async ({ cookies, locals, url }) => {
   return {
     cookies: cookies.getAll(),
     unreadAlertCount,
+    hideAppChrome: isLoginPath(url.pathname),
   };
 };
