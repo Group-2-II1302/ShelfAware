@@ -50,13 +50,11 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   return {
     notifications: rows.map((n) => {
       const shelf = firstOrNull(n.shelf_items);
-      const daysToExpiry =
-        shelf?.expiry_date
-          ? Math.ceil(
-              (new Date(shelf.expiry_date).getTime() - startOfToday) /
-                86_400_000,
-            )
-          : null;
+      const daysToExpiry = shelf?.expiry_date
+        ? Math.ceil(
+            (new Date(shelf.expiry_date).getTime() - startOfToday) / 86_400_000,
+          )
+        : null;
       return {
         id: n.id,
         alertType: n.alert_type,
