@@ -40,6 +40,7 @@ body {
 
 body {
   background: var(--background);
+  margin-top: 50px;
 }
 
 .app-shell {
@@ -493,6 +494,4 @@ body {
 
 .settings__top-error {
   margin: 0 0 1rem;
-}
-
-/*# sourceMappingURL=stylesheet.css.map */
+}/*# sourceMappingURL=stylesheet.css.map */
