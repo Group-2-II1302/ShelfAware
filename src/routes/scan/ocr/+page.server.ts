@@ -6,10 +6,47 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     data: { session },
   } = await locals.supabase.auth.getSession();
 
+  const shelf_id = url.searchParams.get("shelf_id");
+  const slot = url.searchParams.get("slot");
+  const barcode = url.searchParams.get("barcode");
+
+  /*
+    Resolve human-friendly labels for the page header so the user
+    sees the shelf name and product name rather than raw UUIDs /
+    barcodes. Both queries are cheap and tolerant of failure — if
+    they can't resolve we just fall back to the raw value in the UI.
+  */
+  let shelfName: string | null = null;
+  let productName: string | null = null;
+  let productImage: string | null = null;
+
+  if (session) {
+    if (shelf_id) {
+      const { data: shelf } = await locals.supabase
+        .from("shelves")
+        .select("name")
+        .eq("id", shelf_id)
+        .maybeSingle();
+      shelfName = shelf?.name ?? null;
+    }
+    if (barcode) {
+      const { data: prod } = await locals.supabase
+        .from("product_catalog")
+        .select("product_name, image_url")
+        .eq("barcode", barcode)
+        .maybeSingle();
+      productName = prod?.product_name ?? null;
+      productImage = prod?.image_url ?? null;
+    }
+  }
+
   return {
-    shelf_id: url.searchParams.get("shelf_id"),
-    slot: url.searchParams.get("slot"),
-    barcode: url.searchParams.get("barcode"),
+    shelf_id,
+    slot,
+    barcode,
+    shelfName,
+    productName,
+    productImage,
     /*
       '1' when this OCR step is part of a replace flow (user came in
       from tapping a filled slot). The page forwards this through the

@@ -35,9 +35,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     }
   }
 
+  // Resolve a human-friendly shelf name for the page header.
+  const shelfName = shelf_id
+    ? (shelves.find((s) => s.id === shelf_id)?.name ?? null)
+    : null;
+
   return {
     shelf_id,
     slot,
+    shelfName,
     isAuthenticated: !!session,
     shelves,
     slotsByShelf,

@@ -203,25 +203,34 @@
         {/if}
         <div class="button-group">
           <button onclick={startScanner} disabled={isInitializing} class="btn-primary">
-            {isInitializing ? 'Initialising...' : 'Start Scanner'}
+            {isInitializing ? 'Initialising…' : 'Start scanner'}
           </button>
-          <button onclick={() => mode = 'manual'} class="btn-secondary">Enter Manually</button>
+          <button onclick={() => (mode = 'manual')} class="btn-secondary">
+            Enter manually
+          </button>
         </div>
       </div>
     {:else}
-       <button onclick={() => mode = 'manual'} class="btn-floating">Manual Entry</button>
+       <button onclick={() => (mode = 'manual')} class="btn-floating">
+         Manual entry
+       </button>
     {/if}
   {:else}
     <div class="manual-view">
       <form onsubmit={handleManualSubmit} class="manual-form">
-        <h3>Manual Entry</h3>
+        <h3 class="manual-form__title">Enter product details</h3>
         <div class="field">
           <label for="barcode">Barcode</label>
           <input id="barcode" type="text" bind:value={formData.barcode} required />
         </div>
         <div class="field">
-          <label for="product_name">Product Name</label>
-          <input id="product_name" type="text" bind:value={formData.product_name} required />
+          <label for="product_name">Product name</label>
+          <input
+            id="product_name"
+            type="text"
+            bind:value={formData.product_name}
+            required
+          />
         </div>
         <div class="field">
           <label for="brand">Brand</label>
@@ -232,8 +241,14 @@
           <input id="weight" type="number" bind:value={formData.full_weight_g} />
         </div>
         <div class="form-actions">
-          <button type="button" onclick={() => mode = 'scan'} class="btn-secondary">Back</button>
-          <button type="submit" class="btn-primary">Save Product</button>
+          <button
+            type="button"
+            onclick={() => (mode = 'scan')}
+            class="btn-secondary"
+          >
+            Back
+          </button>
+          <button type="submit" class="btn-primary">Save product</button>
         </div>
       </form>
     </div>
@@ -242,47 +257,230 @@
 
 <style>
   .scanner-container {
-    position: relative; width: 100%; max-width: 500px; aspect-ratio: 16/9;
-    margin: auto; background: #0a0a0a; border-radius: 12px; overflow: hidden; color: white;
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    aspect-ratio: 16 / 9;
+    margin: 0 auto;
+    background: #0a0a0a;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    color: #fff;
   }
-  .reader { width: 100%; height: 100%; }
-  .reader.hidden { display: none; }
-  .scanner-container :global(video) { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+
+  .reader {
+    width: 100%;
+    height: 100%;
+  }
+  .reader.hidden {
+    display: none;
+  }
+
+  .scanner-container :global(video) {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
   .overlay {
-    position: absolute; inset: 0; display: flex; flex-direction: column; 
-    align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.85); padding: 20px; z-index: 10;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20, 16, 14, 0.82);
+    padding: 1.25rem;
+    z-index: 10;
   }
+
   .error-banner {
-    margin: 0 0 14px;
-    padding: 10px 12px;
-    max-width: 280px;
+    margin: 0 0 0.9rem;
+    padding: 0.55rem 0.85rem;
+    max-width: 18rem;
     text-align: center;
     font-size: 0.85rem;
-    line-height: 1.35;
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.55);
-    border-radius: 8px;
-    border: 1px solid rgba(248, 113, 113, 0.45);
+    line-height: 1.4;
+    color: #fff;
+    background: rgba(164, 0, 0, 0.55);
+    border-left: 3px solid var(--error);
+    border-radius: var(--radius-sm);
   }
-  .manual-view { position: absolute; inset: 0; background: #1a1a1a; overflow-y: auto; padding: 20px; z-index: 20; }
-  .manual-form { display: flex; flex-direction: column; gap: 12px; }
-  .field { display: flex; flex-direction: column; gap: 4px; text-align: left; }
-  .field label { font-size: 0.8rem; color: #a1a1aa; }
-  .field input { padding: 8px; border-radius: 6px; border: 1px solid #3f3f46; background: #09090b; color: white; }
-  .button-group { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 250px; }
-  .form-actions { display: flex; gap: 10px; padding-top: 10px; }
-  .btn-primary { background: #6366f1; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; flex: 1; }
-  .btn-secondary { background: #3f3f46; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; flex: 1; }
-  .btn-floating { position: absolute; bottom: 10px; right: 10px; background: rgba(99, 102, 241, 0.8); color: white; border: none; padding: 8px; border-radius: 8px; font-size: 0.75rem; z-index: 15; cursor: pointer; }
 
-  /* ── Scan-success feedback ──────────────────────────────────────────────── */
+  /*
+    Manual entry view: a creamy panel sitting over the camera. Uses
+    the app's matcha/brown palette so it doesn't feel like a separate
+    app dropped into the scanner.
+  */
+  .manual-view {
+    position: absolute;
+    inset: 0;
+    background: var(--surface);
+    color: var(--text);
+    overflow-y: auto;
+    padding: 1.1rem;
+    z-index: 20;
+  }
+
+  .manual-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .manual-form__title {
+    margin: 0 0 0.25rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    text-align: left;
+  }
+
+  .field label {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text);
+    opacity: 0.7;
+  }
+
+  .field input {
+    padding: 0.55rem 0.7rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .field input:focus {
+    border-color: var(--matcha);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--matcha-soft);
+  }
+
+  .button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    width: 100%;
+    max-width: 16rem;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 0.6rem;
+    padding-top: 0.5rem;
+  }
+
+  /*
+    Pill buttons matching the app-wide pattern. We use surface/border
+    inside the cream manual view, but on the dark overlay we need the
+    secondary to remain legible — handled with a more contrast-aware
+    `.overlay .btn-secondary` rule below.
+  */
+  .btn-primary {
+    flex: 1;
+    background: var(--text);
+    color: var(--background);
+    border: none;
+    padding: 0.7rem 1rem;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease, opacity 0.15s ease;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #1f1916;
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn-secondary {
+    flex: 1;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.7rem 1rem;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+
+  .btn-secondary:hover {
+    background: var(--background);
+  }
+
+  .btn-secondary:active {
+    transform: translateY(1px);
+  }
+
+  /*
+    Secondary button when sitting on the dark camera overlay — solid
+    surface fill is fine here too because it provides good contrast
+    against the near-black backdrop; only the border looks wrong, so
+    we soften it.
+  */
+  .overlay .btn-secondary {
+    border-color: transparent;
+  }
+
+  /*
+    Floating "Manual entry" button that sits inside the live camera
+    view. Translucent matcha so it reads as a hint affordance rather
+    than the primary action.
+  */
+  .btn-floating {
+    position: absolute;
+    bottom: 0.6rem;
+    right: 0.6rem;
+    background: rgba(122, 139, 63, 0.85);
+    color: #fff;
+    border: none;
+    padding: 0.45rem 0.85rem;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    z-index: 15;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition: background 0.15s ease;
+  }
+
+  .btn-floating:hover {
+    background: var(--matcha-deep);
+  }
+
+  /* ── Scan-success feedback ──────────────────────────────────────────── */
   .success-overlay {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(34, 197, 94, 0.18);
+    background: rgba(122, 139, 63, 0.18);
     z-index: 25;
     animation: success-flash 0.45s ease-out;
   }
@@ -290,31 +488,46 @@
   .success-box {
     width: 250px;
     height: 150px;
-    border: 3px solid #22c55e;
-    border-radius: 8px;
-    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.3);
+    border: 3px solid var(--matcha);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 0 0 2px rgba(122, 139, 63, 0.3);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(34, 197, 94, 0.1);
+    background: rgba(122, 139, 63, 0.1);
   }
 
   .success-check {
     width: 64px;
     height: 64px;
-    color: #22c55e;
+    color: var(--matcha);
     animation: success-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   @keyframes success-flash {
-    0%   { background: rgba(34, 197, 94, 0); }
-    30%  { background: rgba(34, 197, 94, 0.28); }
-    100% { background: rgba(34, 197, 94, 0.18); }
+    0% {
+      background: rgba(122, 139, 63, 0);
+    }
+    30% {
+      background: rgba(122, 139, 63, 0.28);
+    }
+    100% {
+      background: rgba(122, 139, 63, 0.18);
+    }
   }
 
   @keyframes success-pop {
-    0%   { transform: scale(0.4); opacity: 0; }
-    60%  { transform: scale(1.15); opacity: 1; }
-    100% { transform: scale(1); opacity: 1; }
+    0% {
+      transform: scale(0.4);
+      opacity: 0;
+    }
+    60% {
+      transform: scale(1.15);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
   }
 </style>
