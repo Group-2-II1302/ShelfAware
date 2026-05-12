@@ -455,7 +455,7 @@
                     <IconX size={16} stroke={2} />
                   </button>
                   {#if editError}
-                    <p class="form-error" role="alert">{editError}</p>
+                    <p class="form-error row__edit-error" role="alert">{editError}</p>
                   {/if}
                 </form>
               {:else}
