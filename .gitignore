@@ -21,3 +21,18 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+
+.capacitor/
+.idea/
+*.iml
+**/local.properties
+*.apk
+*.aab
+*.hprof
+**/xcuserdata/
+*.xcuserstate
+*.ipa
+*.dSYM.zip
+*.jks
+*.keystore
