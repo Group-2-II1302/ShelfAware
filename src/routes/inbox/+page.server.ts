@@ -48,13 +48,30 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const rows = (data ?? []) as unknown as AlertRow[];
 
   return {
-    notifications: rows.map((n) => ({
-      id: n.id,
-      alertType: n.alert_type,
-      lastTriggeredAt: n.last_triggered_at,
-      readAt: n.read_at,
-      message: formatMessage(n, startOfToday),
-    })),
+    notifications: rows.map((n) => {
+      const shelf = firstOrNull(n.shelf_items);
+      const daysToExpiry =
+        shelf?.expiry_date
+          ? Math.ceil(
+              (new Date(shelf.expiry_date).getTime() - startOfToday) /
+                86_400_000,
+            )
+          : null;
+      return {
+        id: n.id,
+        alertType: n.alert_type,
+        lastTriggeredAt: n.last_triggered_at,
+        readAt: n.read_at,
+        message: formatMessage(n, startOfToday),
+        /*
+          `daysToExpiry` powers the client-side urgency classifier
+          (red for expired, amber for ≤2 days, etc.). For low-stock
+          alerts this is irrelevant and may be null — the classifier
+          handles that case explicitly.
+        */
+        daysToExpiry,
+      };
+    }),
   };
 };
 
