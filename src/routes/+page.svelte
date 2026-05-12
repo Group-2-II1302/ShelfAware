@@ -16,6 +16,8 @@
     IconPlus,
     IconTrendingDown,
     IconAlertTriangle,
+    IconAlertOctagon,
+    IconBellRinging,
     IconTrash,
     IconPackage,
     IconInfoCircle,
@@ -50,6 +52,20 @@
   let activeTab = $state<Tab>(resolveInitialTab())
 
   /*
+    Max rows shown per notification group before "Show more" reveals the rest. 
+  */
+  const NOW_LIST_PREVIEW = 3
+  let nowExpiringExpanded = $state(false)
+  let nowLowStockExpanded = $state(false)
+
+  $effect(() => {
+    if (data.actions.expiring.length <= NOW_LIST_PREVIEW)
+      nowExpiringExpanded = false
+    if (data.actions.lowStock.length <= NOW_LIST_PREVIEW)
+      nowLowStockExpanded = false
+  })
+
+  /*
     Color-legend popover for the shelves grid. Toggled by the small
     info icon next to the "Shelves" heading. Closes on outside click
     and Escape so it never gets stuck open on mobile where there's
@@ -65,90 +81,6 @@
   }
   function handleLegendDocKey(e: KeyboardEvent) {
     if (legendOpen && e.key === 'Escape') legendOpen = false
-  }
-
-  /*
-    Drives the soft right-edge fade on the "Now" carousels. Toggles
-    `--fade-right` 0/1 based on whether there's still hidden content
-    past the right edge; the stylesheet consumes it as an alpha stop
-    in a `mask-image`. Left edge is intentionally never faded — the
-    first tile reads as the natural "start" so a fade there would
-    feel like a glitch.
-
-    Small EDGE_TOL buffer because some browsers report
-    `scrollLeft + clientWidth` slightly off from `scrollWidth` due to
-    sub-pixel rounding.
-  */
-  function tileScrollFade(node: HTMLElement) {
-    const EDGE_TOL = 2
-    function updateFade() {
-      const max = node.scrollWidth - node.clientWidth
-      const hasOverflow = max > EDGE_TOL
-      const right = hasOverflow && node.scrollLeft < max - EDGE_TOL ? 1 : 0
-      node.style.setProperty('--fade-right', String(right))
-    }
-    updateFade()
-    node.addEventListener('scroll', updateFade, { passive: true })
-    const resizeObserver = new ResizeObserver(updateFade)
-    resizeObserver.observe(node)
-
-    /*
-      Mouse-wheel → horizontal scroll redirect. Without this, desktop
-      mouse users can't scroll the carousel at all: the scrollbar is
-      hidden and a regular wheel only emits vertical deltas, which
-      this container doesn't consume. Trackpad two-finger swipes
-      already arrive as `deltaX` and are handled natively, so we
-      only redirect when the gesture is dominantly vertical and the
-      shift key isn't held (shift+wheel is a browser convention for
-      horizontal scroll and shouldn't be doubled).
-    */
-    /*
-      Mouse-wheel → horizontal scroll redirect with smooth easing.
-      Without redirect, a regular mouse can't scroll the carousel
-      (vertical wheel deltas don't move this overflow-x:auto box).
-      `scrollBy({ behavior: 'smooth' })` animates each tick so the
-      motion feels continuous instead of jumping tile-by-tile, and
-      we accumulate deltas across rapid wheel events so spamming the
-      wheel snowballs into a longer smooth scroll rather than
-      restarting the animation each time.
-
-      Trackpad horizontal swipes already arrive as `deltaX` and are
-      handled natively; we only redirect when the gesture is
-      dominantly vertical and shift isn't held.
-    */
-    let pendingDelta = 0
-    let wheelRaf = 0
-    function flushWheel() {
-      wheelRaf = 0
-      if (pendingDelta === 0) return
-      node.scrollBy({ left: pendingDelta, behavior: 'smooth' })
-      pendingDelta = 0
-    }
-    function onWheel(e: WheelEvent) {
-      if (e.shiftKey) return
-      const absX = Math.abs(e.deltaX)
-      const absY = Math.abs(e.deltaY)
-      if (absY <= absX) return
-      const max = node.scrollWidth - node.clientWidth
-      if (max <= EDGE_TOL) return
-      const goingDown = e.deltaY > 0
-      if (goingDown && node.scrollLeft >= max - EDGE_TOL) return
-      if (!goingDown && node.scrollLeft <= EDGE_TOL) return
-      e.preventDefault()
-      pendingDelta += e.deltaY
-      if (!wheelRaf) wheelRaf = requestAnimationFrame(flushWheel)
-    }
-    node.addEventListener('wheel', onWheel, { passive: false })
-
-    return {
-      update: updateFade,
-      destroy() {
-        resizeObserver.disconnect()
-        node.removeEventListener('scroll', updateFade)
-        node.removeEventListener('wheel', onWheel)
-        if (wheelRaf) cancelAnimationFrame(wheelRaf)
-      },
-    }
   }
 
   onMount(() => {
@@ -217,7 +149,7 @@
     server load. Keyed by shelf id; falls back to the value from
     server load on first render.
   */
-  let liveSyncBy = $state<Record<string, string | null>>({});
+  let liveSyncBy = $state<Record<string, string | null>>({})
 
   /*
     When the server load runs again (e.g. via invalidate) we want the
@@ -227,20 +159,17 @@
   $effect(() => {
     for (const shelf of data.shelves) {
       if (!(shelf.id in liveSyncBy)) {
-        liveSyncBy[shelf.id] = shelf.lastSyncedAt;
-        continue;
+        liveSyncBy[shelf.id] = shelf.lastSyncedAt
+        continue
       }
 
-      const local = liveSyncBy[shelf.id];
+      const local = liveSyncBy[shelf.id]
 
-      if (
-        !local ||
-        (shelf.lastSyncedAt && shelf.lastSyncedAt > local)
-      ) {
-        liveSyncBy[shelf.id] = shelf.lastSyncedAt;
+      if (!local || (shelf.lastSyncedAt && shelf.lastSyncedAt > local)) {
+        liveSyncBy[shelf.id] = shelf.lastSyncedAt
       }
     }
-  });
+  })
 
   /*
     Safety-net invalidate. Optimistic patches below cover the common
@@ -286,7 +215,9 @@
             a brand new shelf added by another client — fall back to
             a refresh so the row appears.
           */
-          const shelfId = row?.item_id ? data.itemShelfMap[row.item_id] : undefined
+          const shelfId = row?.item_id
+            ? data.itemShelfMap[row.item_id]
+            : undefined
           if (!shelfId) {
             scheduleRefresh()
             return
@@ -350,10 +281,10 @@
     if (data.actions.expiringTotal === 0 && data.actions.lowStockTotal === 0) {
       return data.shelves.length === 0
         ? "let's get your first shelf paired"
-        : "your kitchen is looking tidy today"
+        : 'your kitchen is looking tidy today'
     }
     if (data.actions.expiringTotal > 0 && data.actions.lowStockTotal > 0) {
-      return "a couple of things need your attention"
+      return 'a couple of things need your attention'
     }
     if (data.actions.expiringTotal > 0) {
       return data.actions.expiringTotal === 1
@@ -420,12 +351,11 @@
   }
 
   /*
-    Urgency bucket for the image-tile ring and badge. Mirrors the
-    palette used by the folder grid's micro-cells so the two parts of
-    the dashboard speak the same visual language.
+    Urgency bucket for notification rows and icon tint. Mirrors the folder grid
+    and inbox vocabulary.
       crit  → red    (expired / empty)
-      warn  → amber  (≤2 days / "low" bucket)
-      ok    → matcha (everything else)
+      warn  → amber  (≤2 days / low stock)
+      ok    → matcha (expiring later in the window)
   */
   function expiryUrgency(days: number | null): 'crit' | 'warn' | 'ok' {
     if (days === null) return 'ok'
@@ -441,27 +371,12 @@
     return 'warn'
   }
 
-  /*
-    Short badge text overlaid in the tile corner. Kept ultra-terse so
-    it doesn't fight the image: "-1d" / "2d" / "low" / "empty".
-  */
-  function expiryBadge(days: number | null): string {
-    if (days === null) return ''
-    if (days < 0) return `${days}d`
-    if (days === 0) return 'today'
-    return `${days}d`
-  }
-
-  function lowStockBadge(item: {
-    currentWeightG: number | null
-    thresholdG: number | null
-    tareG?: number | null
-    fullG?: number | null
-  }): string {
-    if (item.currentWeightG !== null && item.currentWeightG <= 0) return 'empty'
-    const pct = percentFull(item)
-    if (pct !== null) return `${pct}%`
-    return 'low'
+  function urgencyInsightMod(
+    u: 'crit' | 'warn' | 'ok',
+  ): 'alert' | 'warn' | 'matcha' {
+    if (u === 'crit') return 'alert'
+    if (u === 'warn') return 'warn'
+    return 'matcha'
   }
 </script>
 
@@ -474,10 +389,9 @@
     <h1>
       {greeting()}{data.firstName ? `, ${data.firstName}` : ''}<span
         class="greet-mark"
-        aria-hidden="true">&nbsp;<IconMoodSmileBeam
-          size={26}
-          stroke={1.75}
-        /></span>
+        aria-hidden="true"
+        >&nbsp;<IconMoodSmileBeam size={26} stroke={1.75} /></span
+      >
     </h1>
     <p class="dashboard__subtitle">
       welcome back to <span class="brand">ShelfAware</span> - {subtitle()}
@@ -512,557 +426,717 @@
   </div>
 
   {#if activeTab === 'today'}
-  <div role="tabpanel" id="panel-today" aria-labelledby="tab-today">
+    <div role="tabpanel" id="panel-today" aria-labelledby="tab-today">
+      <section class="now" aria-labelledby="now-heading">
+        <h2 id="now-heading" class="section-title">Now</h2>
 
-  <section class="now" aria-labelledby="now-heading">
-    <h2 id="now-heading" class="section-title">Now</h2>
-
-    {#if data.actions.expiringTotal === 0 && data.actions.lowStockTotal === 0}
-      <div class="now__empty">
-        <span class="now__empty-mark" aria-hidden="true">✓</span>
-        <p>You're all set. Nothing expiring or running low.</p>
-      </div>
-    {:else}
-      <div class="stat-grid">
-        <article
-          class="stat-card"
-          class:stat-card--muted={data.actions.expiringTotal === 0}
-        >
-          <header class="stat-card__head" aria-live="polite" aria-atomic="true">
-            <span class="stat-card__count">{data.actions.expiringTotal}</span>
-            <span class="stat-card__label">
-              {data.actions.expiringTotal === 1 ? 'item expiring' : 'items expiring'}
-            </span>
-          </header>
-          {#if data.actions.expiringTotal > 0}
-            <p class="stat-card__breakdown">
-              {#if data.actions.expiringBuckets.expired > 0}
-                <span class="chip chip--alert">{data.actions.expiringBuckets.expired} expired</span>
-              {/if}
-              {#if data.actions.expiringBuckets.today > 0}
-                <span class="chip chip--warn">{data.actions.expiringBuckets.today} today</span>
-              {/if}
-              {#if data.actions.expiringBuckets.soon > 0}
-                <span class="chip">{data.actions.expiringBuckets.soon} this week</span>
-              {/if}
-            </p>
-
-            <ul class="tile-scroll" use:tileScrollFade>
-              {#each data.actions.expiring as item (item.id)}
-                {@const u = expiryUrgency(item.daysToExpiry)}
-                <li class="tile-scroll__item">
-                  <a
-                    class="tile tile--{u}"
-                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
-                    aria-label="{item.name} — {formatExpiry(item.daysToExpiry)}"
-                  >
-                    <div class="tile__media">
-                      {#if item.imageUrl}
-                        <img
-                          src={item.imageUrl}
-                          alt=""
-                          loading="lazy"
-                          referrerpolicy="no-referrer"
-                        />
-                      {:else}
-                        <span class="tile__placeholder" aria-hidden="true">
-                          <IconPackage size={32} stroke={1.5} />
+        {#if data.actions.expiringTotal === 0 && data.actions.lowStockTotal === 0}
+          <div class="now__empty">
+            <span class="now__empty-mark" aria-hidden="true">✓</span>
+            <p>You're all set. Nothing expiring or running low.</p>
+          </div>
+        {:else}
+          <div class="now-groups" aria-live="polite">
+            {#if data.actions.expiringTotal > 0}
+              {@const expiringAll = data.actions.expiring}
+              {@const expiringOverflow = expiringAll.length > NOW_LIST_PREVIEW}
+              {@const expiringVisible =
+                nowExpiringExpanded || !expiringOverflow
+                  ? expiringAll
+                  : expiringAll.slice(0, NOW_LIST_PREVIEW)}
+              <section class="now-group" aria-labelledby="now-exp-heading">
+                <h3 id="now-exp-heading" class="now-group__title">
+                  {data.actions.expiringTotal === 1
+                    ? '1 item expiring'
+                    : `${data.actions.expiringTotal} items expiring`}
+                </h3>
+                <ul class="now-group__list">
+                  {#each expiringVisible as item (item.id)}
+                    {@const u = expiryUrgency(item.daysToExpiry)}
+                    {@const mod = urgencyInsightMod(u)}
+                    <li class="now-row">
+                      <a
+                        class="now-row__link"
+                        href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                        aria-label="{item.name}, {formatExpiry(
+                          item.daysToExpiry,
+                        )}, {item.shelfName}"
+                      >
+                        <span
+                          class="insight-card__icon insight-card__icon--{mod}"
+                          aria-hidden="true"
+                        >
+                          {#if u === 'crit'}
+                            <IconAlertOctagon size={20} stroke={1.75} />
+                          {:else if u === 'warn'}
+                            <IconAlertTriangle size={20} stroke={1.75} />
+                          {:else}
+                            <IconBellRinging size={20} stroke={1.75} />
+                          {/if}
                         </span>
-                      {/if}
-                      <span class="tile__badge tile__badge--{u}">{expiryBadge(item.daysToExpiry)}</span>
-                    </div>
-                    <span class="tile__name">{item.name}</span>
-                    <span class="tile__meta">{formatExpiry(item.daysToExpiry)}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </article>
-
-        <article class="stat-card" class:stat-card--muted={data.actions.lowStockTotal === 0}>
-          <header class="stat-card__head" aria-live="polite" aria-atomic="true">
-            <span class="stat-card__count">{data.actions.lowStockTotal}</span>
-            <span class="stat-card__label">
-              {data.actions.lowStockTotal === 1 ? 'item running low' : 'items running low'}
-            </span>
-          </header>
-          {#if data.actions.lowStockTotal > 0}
-            <p class="stat-card__breakdown">
-              {#if data.actions.lowStockBuckets.empty > 0}
-                <span class="chip chip--alert">{data.actions.lowStockBuckets.empty} empty</span>
-              {/if}
-              {#if data.actions.lowStockBuckets.low > 0}
-                <span class="chip chip--warn">{data.actions.lowStockBuckets.low} low</span>
-              {/if}
-            </p>
-
-            <ul class="tile-scroll" use:tileScrollFade>
-              {#each data.actions.lowStock as item (item.id)}
-                {@const u = lowStockUrgency(item)}
-                <li class="tile-scroll__item">
-                  <a
-                    class="tile tile--{u}"
-                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
-                    aria-label="{item.name} — {formatLowStock(item)}"
-                  >
-                    <div class="tile__media">
-                      {#if item.imageUrl}
-                        <img
-                          src={item.imageUrl}
-                          alt=""
-                          loading="lazy"
-                          referrerpolicy="no-referrer"
-                        />
-                      {:else}
-                        <span class="tile__placeholder" aria-hidden="true">
-                          <IconPackage size={32} stroke={1.5} />
+                        <span class="now-row__body">
+                          <span class="now-row__message">{item.name}</span>
+                          <span class="now-row__meta">
+                            <span class="now-row__type now-row__type--{mod}">
+                              {formatExpiry(item.daysToExpiry)}
+                            </span>
+                            <span class="now-row__sep">·</span>
+                            <span>{item.shelfName}</span>
+                          </span>
                         </span>
-                      {/if}
-                      <span class="tile__badge tile__badge--{u}">{lowStockBadge(item)}</span>
-                    </div>
-                    <span class="tile__name">{item.name}</span>
-                    <span class="tile__meta">{formatLowStock(item)}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </article>
-      </div>
-    {/if}
-  </section>
+                        {#if item.imageUrl}
+                          <img
+                            class="now-row__thumb"
+                            src={item.imageUrl}
+                            alt=""
+                            loading="lazy"
+                            referrerpolicy="no-referrer"
+                          />
+                        {:else}
+                          <span
+                            class="now-row__thumb now-row__thumb--placeholder"
+                            aria-hidden="true"
+                          >
+                            <IconPackage size={22} stroke={1.5} />
+                          </span>
+                        {/if}
+                      </a>
+                    </li>
+                  {/each}
+                </ul>
+                {#if expiringOverflow && !nowExpiringExpanded}
+                  <div class="now-group__toggle-wrap">
+                    <button
+                      type="button"
+                      class="now-group__toggle"
+                      aria-expanded="false"
+                      aria-label="Show all {expiringAll.length} expiring items"
+                      onclick={() => (nowExpiringExpanded = true)}
+                    >
+                      Show more
+                    </button>
+                  </div>
+                {:else if expiringOverflow && nowExpiringExpanded}
+                  <div class="now-group__toggle-wrap">
+                    <button
+                      type="button"
+                      class="now-group__toggle"
+                      aria-expanded="true"
+                      aria-label="Show only the first {NOW_LIST_PREVIEW} expiring items"
+                      onclick={() => (nowExpiringExpanded = false)}
+                    >
+                      Show less
+                    </button>
+                  </div>
+                {/if}
+              </section>
+            {/if}
 
-  <section class="shelves" aria-labelledby="shelves-heading">
-    <div class="shelves__heading">
-      <h2 id="shelves-heading" class="section-title">Shelves</h2>
-      <div class="legend" bind:this={legendRoot}>
-        <button
-          type="button"
-          class="legend__trigger"
-          aria-label="Show colour legend"
-          aria-expanded={legendOpen}
-          aria-controls="shelves-legend"
-          onclick={(e) => {
-            e.stopPropagation()
-            legendOpen = !legendOpen
-          }}
-        >
-          <IconInfoCircle size={18} stroke={1.75} />
-        </button>
-        {#if legendOpen}
-          <div
-            id="shelves-legend"
-            class="legend__panel"
-            role="dialog"
-            aria-label="What the slot colours mean"
-          >
-            <p class="legend__title">Slot colours</p>
-            <ul class="legend__list">
-              <li>
-                <span class="legend__swatch legend__swatch--ok" aria-hidden="true"></span>
-                <div>
-                  <strong>Stocked</strong>
-                  <span class="legend__hint">Has product, not expiring soon</span>
-                </div>
-              </li>
-              <li>
-                <span class="legend__swatch legend__swatch--warn" aria-hidden="true"></span>
-                <div>
-                  <strong>Heads up</strong>
-                  <span class="legend__hint">Running low or expires within 2 days</span>
-                </div>
-              </li>
-              <li>
-                <span class="legend__swatch legend__swatch--crit" aria-hidden="true"></span>
-                <div>
-                  <strong>Act now</strong>
-                  <span class="legend__hint">Expired or fully consumed</span>
-                </div>
-              </li>
-              <li>
-                <span class="legend__swatch legend__swatch--empty" aria-hidden="true"></span>
-                <div>
-                  <strong>Empty slot</strong>
-                  <span class="legend__hint">No item assigned</span>
-                </div>
-              </li>
-            </ul>
+            {#if data.actions.lowStockTotal > 0}
+              {@const lowAll = data.actions.lowStock}
+              {@const lowOverflow = lowAll.length > NOW_LIST_PREVIEW}
+              {@const lowVisible =
+                nowLowStockExpanded || !lowOverflow
+                  ? lowAll
+                  : lowAll.slice(0, NOW_LIST_PREVIEW)}
+              <section class="now-group" aria-labelledby="now-low-heading">
+                <h3 id="now-low-heading" class="now-group__title">
+                  {data.actions.lowStockTotal === 1
+                    ? '1 item running low'
+                    : `${data.actions.lowStockTotal} items running low`}
+                </h3>
+                <ul class="now-group__list">
+                  {#each lowVisible as item (item.id)}
+                    {@const u = lowStockUrgency(item)}
+                    {@const mod = urgencyInsightMod(u)}
+                    <li class="now-row">
+                      <a
+                        class="now-row__link"
+                        href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                        aria-label="{item.name}, {formatLowStock(
+                          item,
+                        )}, {item.shelfName}"
+                      >
+                        <span
+                          class="insight-card__icon insight-card__icon--{mod}"
+                          aria-hidden="true"
+                        >
+                          {#if u === 'crit'}
+                            <IconAlertOctagon size={20} stroke={1.75} />
+                          {:else}
+                            <IconAlertTriangle size={20} stroke={1.75} />
+                          {/if}
+                        </span>
+                        <span class="now-row__body">
+                          <span class="now-row__message">{item.name}</span>
+                          <span class="now-row__meta">
+                            <span class="now-row__type now-row__type--{mod}">
+                              {formatLowStock(item)}
+                            </span>
+                            <span class="now-row__sep">·</span>
+                            <span>{item.shelfName}</span>
+                          </span>
+                        </span>
+                        {#if item.imageUrl}
+                          <img
+                            class="now-row__thumb"
+                            src={item.imageUrl}
+                            alt=""
+                            loading="lazy"
+                            referrerpolicy="no-referrer"
+                          />
+                        {:else}
+                          <span
+                            class="now-row__thumb now-row__thumb--placeholder"
+                            aria-hidden="true"
+                          >
+                            <IconPackage size={22} stroke={1.5} />
+                          </span>
+                        {/if}
+                      </a>
+                    </li>
+                  {/each}
+                </ul>
+                {#if lowOverflow && !nowLowStockExpanded}
+                  <div class="now-group__toggle-wrap">
+                    <button
+                      type="button"
+                      class="now-group__toggle"
+                      aria-expanded="false"
+                      aria-label="Show all {lowAll.length} low-stock items"
+                      onclick={() => (nowLowStockExpanded = true)}
+                    >
+                      Show more
+                    </button>
+                  </div>
+                {:else if lowOverflow && nowLowStockExpanded}
+                  <div class="now-group__toggle-wrap">
+                    <button
+                      type="button"
+                      class="now-group__toggle"
+                      aria-expanded="true"
+                      aria-label="Show only the first {NOW_LIST_PREVIEW} low-stock items"
+                      onclick={() => (nowLowStockExpanded = false)}
+                    >
+                      Show less
+                    </button>
+                  </div>
+                {/if}
+              </section>
+            {/if}
           </div>
         {/if}
-      </div>
-    </div>
+      </section>
 
-    <ul
-      class="folder-grid"
-      class:folder-grid--empty={data.shelves.length === 0}
-    >
-      {#each data.shelves as shelf (shelf.id)}
-        <li class="folder">
-          <a
-            href="/shelves/{shelf.id}"
-            class="folder__link"
-            aria-label="{shelf.name}, {shelf.filledSlots} of {shelf.totalSlots} slots filled"
-          >
-            <div
-              class="folder__preview"
-              role="img"
-              aria-hidden="true"
+      <section class="shelves" aria-labelledby="shelves-heading">
+        <div class="shelves__heading">
+          <h2 id="shelves-heading" class="section-title">Shelves</h2>
+          <div class="legend" bind:this={legendRoot}>
+            <button
+              type="button"
+              class="legend__trigger"
+              aria-label="Show colour legend"
+              aria-expanded={legendOpen}
+              aria-controls="shelves-legend"
+              onclick={(e) => {
+                e.stopPropagation()
+                legendOpen = !legendOpen
+              }}
             >
-              {#each shelf.slotStates as state, i (i)}
-                <span class="folder__cell folder__cell--{state}"></span>
-              {/each}
-            </div>
+              <IconInfoCircle size={18} stroke={1.75} />
+            </button>
+            {#if legendOpen}
+              <div
+                id="shelves-legend"
+                class="legend__panel"
+                role="dialog"
+                aria-label="What the slot colours mean"
+              >
+                <p class="legend__title">Slot colours</p>
+                <ul class="legend__list">
+                  <li>
+                    <span
+                      class="legend__swatch legend__swatch--ok"
+                      aria-hidden="true"
+                    ></span>
+                    <div>
+                      <strong>Stocked</strong>
+                      <span class="legend__hint"
+                        >Has product, not expiring soon</span
+                      >
+                    </div>
+                  </li>
+                  <li>
+                    <span
+                      class="legend__swatch legend__swatch--warn"
+                      aria-hidden="true"
+                    ></span>
+                    <div>
+                      <strong>Heads up</strong>
+                      <span class="legend__hint"
+                        >Running low or expires within 2 days</span
+                      >
+                    </div>
+                  </li>
+                  <li>
+                    <span
+                      class="legend__swatch legend__swatch--crit"
+                      aria-hidden="true"
+                    ></span>
+                    <div>
+                      <strong>Act now</strong>
+                      <span class="legend__hint">Expired or fully consumed</span
+                      >
+                    </div>
+                  </li>
+                  <li>
+                    <span
+                      class="legend__swatch legend__swatch--empty"
+                      aria-hidden="true"
+                    ></span>
+                    <div>
+                      <strong>Empty slot</strong>
+                      <span class="legend__hint">No item assigned</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            {/if}
+          </div>
+        </div>
 
-            <div class="folder__caption">
-              <span class="folder__name">{shelf.name}</span>
-              <span class="folder__meta">
-                <span class="folder__count">
-                  {shelf.filledSlots}/{shelf.totalSlots}
-                </span>
-                <SyncStatusBadge
-                  lastSeen={liveSyncBy[shelf.id]}
-                  hasItems={shelf.hasItems}
-                  dotOnly
-                />
+        <ul
+          class="folder-grid"
+          class:folder-grid--empty={data.shelves.length === 0}
+        >
+          {#each data.shelves as shelf (shelf.id)}
+            <li class="folder">
+              <a
+                href="/shelves/{shelf.id}"
+                class="folder__link"
+                aria-label="{shelf.name}, {shelf.filledSlots} of {shelf.totalSlots} slots filled"
+              >
+                <div class="folder__preview" role="img" aria-hidden="true">
+                  {#each shelf.slotStates as state, i (i)}
+                    <span class="folder__cell folder__cell--{state}"></span>
+                  {/each}
+                </div>
+
+                <div class="folder__caption">
+                  <span class="folder__name">{shelf.name}</span>
+                  <span class="folder__meta">
+                    <span class="folder__count">
+                      {shelf.filledSlots}/{shelf.totalSlots}
+                    </span>
+                    <SyncStatusBadge
+                      lastSeen={liveSyncBy[shelf.id]}
+                      hasItems={shelf.hasItems}
+                      dotOnly
+                    />
+                  </span>
+                </div>
+              </a>
+            </li>
+          {/each}
+
+          <li
+            class="folder folder--add"
+            class:folder--add-hero={data.shelves.length === 0}
+          >
+            <a href="/setup" class="folder__link folder__link--add">
+              <span class="folder__add-icon" aria-hidden="true">
+                <IconPlus size={28} stroke={1.75} />
               </span>
-            </div>
-          </a>
-        </li>
-      {/each}
-
-      <li
-        class="folder folder--add"
-        class:folder--add-hero={data.shelves.length === 0}
-      >
-        <a href="/setup" class="folder__link folder__link--add">
-          <span class="folder__add-icon" aria-hidden="true">
-            <IconPlus size={28} stroke={1.75} />
-          </span>
-          <span class="folder__name folder__name--add">
-            {data.shelves.length === 0
-              ? 'Pair your first shelf'
-              : 'Pair a new shelf'}
-          </span>
-        </a>
-      </li>
-    </ul>
-  </section>
-
-  </div>
+              <span class="folder__name folder__name--add">
+                {data.shelves.length === 0
+                  ? 'Pair your first shelf'
+                  : 'Pair a new shelf'}
+              </span>
+            </a>
+          </li>
+        </ul>
+      </section>
+    </div>
   {:else}
-  <!--
+    <!--
     Insights are streamed from the server (`data.insights` is a
     Promise). While it resolves we show a lightweight skeleton so the
     tab doesn't pop in late. {#await} settles synchronously on
     subsequent navigations because SvelteKit caches the resolved
     value in the data graph.
   -->
-  {#await data.insights}
-    <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights insights--loading" aria-busy="true">
-      <p class="insights__intro">
-        Trends from your weight history. Use the time range to compare
-        windows; arrows show change vs the previous period.
-      </p>
-      <div class="range-toggle range-toggle--skeleton" aria-hidden="true">
-        <span class="skeleton-chip"></span>
-        <span class="skeleton-chip"></span>
-        <span class="skeleton-chip"></span>
-      </div>
-      <div class="overview overview--skeleton" aria-hidden="true">
-        <div class="overview__metric"><span class="skeleton-line skeleton-line--lg"></span><span class="skeleton-line skeleton-line--sm"></span></div>
-        <div class="overview__metric"><span class="skeleton-line skeleton-line--lg"></span><span class="skeleton-line skeleton-line--sm"></span></div>
-        <div class="overview__metric"><span class="skeleton-line skeleton-line--lg"></span><span class="skeleton-line skeleton-line--sm"></span></div>
-      </div>
-      <div class="insight-card insight-card--skeleton" aria-hidden="true">
-        <span class="skeleton-line skeleton-line--md"></span>
-        <span class="skeleton-line"></span>
-        <span class="skeleton-line"></span>
-        <span class="skeleton-line skeleton-line--short"></span>
-      </div>
-      <div class="insight-card insight-card--skeleton" aria-hidden="true">
-        <span class="skeleton-line skeleton-line--md"></span>
-        <span class="skeleton-line"></span>
-        <span class="skeleton-line skeleton-line--short"></span>
-      </div>
-      <span class="visually-hidden">Loading insights…</span>
-    </div>
-  {:then ins}
-  {@const sparse = ins.daysOfHistory < ins.minDataDays}
-  <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights">
-    <p class="insights__intro">
-      Trends from your weight history. Use the time range to compare
-      windows; arrows show change vs the previous period.
-    </p>
-    <div class="range-toggle" role="group" aria-label="Time range">
-      {#each ins.availableRanges as r (r)}
-        <button
-          type="button"
-          class="range-toggle__btn"
-          class:range-toggle__btn--active={ins.range === r}
-          aria-pressed={ins.range === r}
-          onclick={() => setRange(r)}
-        >
-          {r}
-        </button>
-      {/each}
-    </div>
-
-    {#if sparse}
-      <div class="insights__sparse">
-        <p class="insights__sparse-title">Insights are warming up</p>
-        <p class="insights__sparse-body">
-          Come back in a few days — once your shelves have built up a bit of
-          weight history, this is where you'll see what you eat through
-          fastest, what's always running low, and what's been wasted.
+    {#await data.insights}
+      <div
+        role="tabpanel"
+        id="panel-insights"
+        aria-labelledby="tab-insights"
+        class="insights insights--loading"
+        aria-busy="true"
+      >
+        <p class="insights__intro">
+          Trends from your weight history. Use the time range to compare
+          windows; arrows show change vs the previous period.
         </p>
+        <div class="range-toggle range-toggle--skeleton" aria-hidden="true">
+          <span class="skeleton-chip"></span>
+          <span class="skeleton-chip"></span>
+          <span class="skeleton-chip"></span>
+        </div>
+        <div class="overview overview--skeleton" aria-hidden="true">
+          <div class="overview__metric">
+            <span class="skeleton-line skeleton-line--lg"></span><span
+              class="skeleton-line skeleton-line--sm"
+            ></span>
+          </div>
+          <div class="overview__metric">
+            <span class="skeleton-line skeleton-line--lg"></span><span
+              class="skeleton-line skeleton-line--sm"
+            ></span>
+          </div>
+          <div class="overview__metric">
+            <span class="skeleton-line skeleton-line--lg"></span><span
+              class="skeleton-line skeleton-line--sm"
+            ></span>
+          </div>
+        </div>
+        <div class="insight-card insight-card--skeleton" aria-hidden="true">
+          <span class="skeleton-line skeleton-line--md"></span>
+          <span class="skeleton-line"></span>
+          <span class="skeleton-line"></span>
+          <span class="skeleton-line skeleton-line--short"></span>
+        </div>
+        <div class="insight-card insight-card--skeleton" aria-hidden="true">
+          <span class="skeleton-line skeleton-line--md"></span>
+          <span class="skeleton-line"></span>
+          <span class="skeleton-line skeleton-line--short"></span>
+        </div>
+        <span class="visually-hidden">Loading insights…</span>
       </div>
-    {:else}
-      <section class="overview" aria-label="Period summary">
-        <div class="overview__metric">
-          <span class="overview__value">{formatGrams(ins.overview.consumedTotalG)}</span>
-          <span class="overview__label">consumed</span>
-          {#if ins.overview.delta.consumedPct !== null}
-            <span
-              class="overview__delta"
-              class:overview__delta--up={ins.overview.delta.consumedPct > 0}
-              class:overview__delta--down={ins.overview.delta.consumedPct < 0}
-              title="vs previous {ins.windowDays} days"
-            >
-              {formatDelta(ins.overview.delta.consumedPct)}
-            </span>
-          {/if}
-        </div>
-
-        <div class="overview__metric">
-          <span class="overview__value">{ins.overview.wastedItemCount}</span>
-          <span class="overview__label">
-            {ins.overview.wastedItemCount === 1 ? 'item wasted' : 'items wasted'}
-          </span>
-          {#if ins.overview.delta.wastedPct !== null}
-            <span
-              class="overview__delta"
-              class:overview__delta--good={ins.overview.delta.wastedPct < 0}
-              class:overview__delta--bad={ins.overview.delta.wastedPct > 0}
-              title="vs previous {ins.windowDays} days"
-            >
-              {formatDelta(ins.overview.delta.wastedPct)}
-            </span>
-          {/if}
-        </div>
-
-        <div class="overview__metric">
-          <span class="overview__value">{ins.overview.lowStockAlertCount}</span>
-          <span class="overview__label">low-stock alerts</span>
-          {#if ins.overview.delta.lowStockPct !== null}
-            <span
-              class="overview__delta"
-              class:overview__delta--good={ins.overview.delta.lowStockPct < 0}
-              class:overview__delta--bad={ins.overview.delta.lowStockPct > 0}
-              title="vs previous {ins.windowDays} days"
-            >
-              {formatDelta(ins.overview.delta.lowStockPct)}
-            </span>
-          {/if}
-        </div>
-      </section>
-    {/if}
-
-    <!-- Wasted summary card -->
-    <section class="insight-card" aria-labelledby="wasted-heading">
-      <header class="insight-card__head">
-        <span class="insight-card__icon insight-card__icon--alert" aria-hidden="true">
-          <IconTrash size={20} stroke={1.75} />
-        </span>
-        <div>
-          <h2 id="wasted-heading" class="insight-card__title">Wasted</h2>
-          <p class="insight-card__subtitle">last {ins.windowDays} days</p>
-        </div>
-      </header>
-
-      {#if sparse}
-        <div class="skeleton skeleton--summary"></div>
-      {:else if ins.wastedItemCount === 0}
-        <p class="insight-card__empty">
-          Nothing wasted in the last {ins.windowDays} days. Nice work.
+    {:then ins}
+      {@const sparse = ins.daysOfHistory < ins.minDataDays}
+      <div
+        role="tabpanel"
+        id="panel-insights"
+        aria-labelledby="tab-insights"
+        class="insights"
+      >
+        <p class="insights__intro">
+          Trends from your weight history. Use the time range to compare
+          windows; arrows show change vs the previous period.
         </p>
-      {:else}
-        <p class="wasted-summary">
-          <span class="wasted-summary__count">{ins.wastedItemCount}</span>
-          {ins.wastedItemCount === 1 ? 'item' : 'items'} expired with weight
-          still on the scale &ndash;
-          {#if ins.wastedWeightApproximate}
-            about <strong>{formatGrams(ins.wastedTotalG)}</strong> on-scale
-            (includes container)
+        <div class="range-toggle" role="group" aria-label="Time range">
+          {#each ins.availableRanges as r (r)}
+            <button
+              type="button"
+              class="range-toggle__btn"
+              class:range-toggle__btn--active={ins.range === r}
+              aria-pressed={ins.range === r}
+              onclick={() => setRange(r)}
+            >
+              {r}
+            </button>
+          {/each}
+        </div>
+
+        {#if sparse}
+          <div class="insights__sparse">
+            <p class="insights__sparse-title">Insights are warming up</p>
+            <p class="insights__sparse-body">
+              Come back in a few days — once your shelves have built up a bit of
+              weight history, this is where you'll see what you eat through
+              fastest, what's always running low, and what's been wasted.
+            </p>
+          </div>
+        {:else}
+          <section class="overview" aria-label="Period summary">
+            <div class="overview__metric">
+              <span class="overview__value"
+                >{formatGrams(ins.overview.consumedTotalG)}</span
+              >
+              <span class="overview__label">consumed</span>
+              {#if ins.overview.delta.consumedPct !== null}
+                <span
+                  class="overview__delta"
+                  class:overview__delta--up={ins.overview.delta.consumedPct > 0}
+                  class:overview__delta--down={ins.overview.delta.consumedPct <
+                    0}
+                  title="vs previous {ins.windowDays} days"
+                >
+                  {formatDelta(ins.overview.delta.consumedPct)}
+                </span>
+              {/if}
+            </div>
+
+            <div class="overview__metric">
+              <span class="overview__value">{ins.overview.wastedItemCount}</span
+              >
+              <span class="overview__label">
+                {ins.overview.wastedItemCount === 1
+                  ? 'item wasted'
+                  : 'items wasted'}
+              </span>
+              {#if ins.overview.delta.wastedPct !== null}
+                <span
+                  class="overview__delta"
+                  class:overview__delta--good={ins.overview.delta.wastedPct < 0}
+                  class:overview__delta--bad={ins.overview.delta.wastedPct > 0}
+                  title="vs previous {ins.windowDays} days"
+                >
+                  {formatDelta(ins.overview.delta.wastedPct)}
+                </span>
+              {/if}
+            </div>
+
+            <div class="overview__metric">
+              <span class="overview__value"
+                >{ins.overview.lowStockAlertCount}</span
+              >
+              <span class="overview__label">low-stock alerts</span>
+              {#if ins.overview.delta.lowStockPct !== null}
+                <span
+                  class="overview__delta"
+                  class:overview__delta--good={ins.overview.delta.lowStockPct <
+                    0}
+                  class:overview__delta--bad={ins.overview.delta.lowStockPct >
+                    0}
+                  title="vs previous {ins.windowDays} days"
+                >
+                  {formatDelta(ins.overview.delta.lowStockPct)}
+                </span>
+              {/if}
+            </div>
+          </section>
+        {/if}
+
+        <!-- Wasted summary card -->
+        <section class="insight-card" aria-labelledby="wasted-heading">
+          <header class="insight-card__head">
+            <span
+              class="insight-card__icon insight-card__icon--alert"
+              aria-hidden="true"
+            >
+              <IconTrash size={20} stroke={1.75} />
+            </span>
+            <div>
+              <h2 id="wasted-heading" class="insight-card__title">Wasted</h2>
+              <p class="insight-card__subtitle">last {ins.windowDays} days</p>
+            </div>
+          </header>
+
+          {#if sparse}
+            <div class="skeleton skeleton--summary"></div>
+          {:else if ins.wastedItemCount === 0}
+            <p class="insight-card__empty">
+              Nothing wasted in the last {ins.windowDays} days. Nice work.
+            </p>
           {:else}
-            roughly <strong>{formatGrams(ins.wastedTotalG)}</strong> of product
-          {/if}
-        </p>
-        <ul class="insight-list">
-          {#each ins.wasted as item (item.itemId)}
-            <li>
-              <a
-                class="insight-row"
-                href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
-              >
-                {#if item.imageUrl}
-                  <img
-                    class="insight-row__img"
-                    src={item.imageUrl}
-                    alt=""
-                    loading="lazy"
-                    referrerpolicy="no-referrer"
-                  />
-                {:else}
-                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
-                    {item.name.charAt(0).toUpperCase()}
-                  </span>
-                {/if}
-                <div class="insight-row__body">
-                  <p class="insight-row__name">{item.name}</p>
-                  <p class="insight-row__meta">
-                    expired {formatExpiredAgo(item.expiryDate)} ·
-                    {#if item.weightIsApproximate}
-                      {formatGrams(item.estimatedRemainingG)} on scale
+            <p class="wasted-summary">
+              <span class="wasted-summary__count">{ins.wastedItemCount}</span>
+              {ins.wastedItemCount === 1 ? 'item' : 'items'} expired with weight still
+              on the scale &ndash;
+              {#if ins.wastedWeightApproximate}
+                about <strong>{formatGrams(ins.wastedTotalG)}</strong> on-scale (includes
+                container)
+              {:else}
+                roughly <strong>{formatGrams(ins.wastedTotalG)}</strong> of product
+              {/if}
+            </p>
+            <ul class="insight-list">
+              {#each ins.wasted as item (item.itemId)}
+                <li>
+                  <a
+                    class="insight-row"
+                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                  >
+                    {#if item.imageUrl}
+                      <img
+                        class="insight-row__img"
+                        src={item.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                      />
                     {:else}
-                      ~{formatGrams(item.estimatedRemainingG)} left
+                      <span
+                        class="insight-row__img insight-row__img--placeholder"
+                        aria-hidden="true"
+                      >
+                        {item.name.charAt(0).toUpperCase()}
+                      </span>
                     {/if}
-                  </p>
-                </div>
-              </a>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+                    <div class="insight-row__body">
+                      <p class="insight-row__name">{item.name}</p>
+                      <p class="insight-row__meta">
+                        expired {formatExpiredAgo(item.expiryDate)} ·
+                        {#if item.weightIsApproximate}
+                          {formatGrams(item.estimatedRemainingG)} on scale
+                        {:else}
+                          ~{formatGrams(item.estimatedRemainingG)} left
+                        {/if}
+                      </p>
+                    </div>
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
 
-    <!-- Fastest consumed -->
-    <section class="insight-card" aria-labelledby="fastest-heading">
-      <header class="insight-card__head">
-        <span class="insight-card__icon insight-card__icon--matcha" aria-hidden="true">
-          <IconTrendingDown size={20} stroke={1.75} />
-        </span>
-        <div>
-          <h2 id="fastest-heading" class="insight-card__title">Eat through fastest</h2>
-          <p class="insight-card__subtitle">grams per day, last {ins.windowDays} days</p>
-        </div>
-      </header>
+        <!-- Fastest consumed -->
+        <section class="insight-card" aria-labelledby="fastest-heading">
+          <header class="insight-card__head">
+            <span
+              class="insight-card__icon insight-card__icon--matcha"
+              aria-hidden="true"
+            >
+              <IconTrendingDown size={20} stroke={1.75} />
+            </span>
+            <div>
+              <h2 id="fastest-heading" class="insight-card__title">
+                Eat through fastest
+              </h2>
+              <p class="insight-card__subtitle">
+                grams per day, last {ins.windowDays} days
+              </p>
+            </div>
+          </header>
 
-      {#if sparse || ins.fastestConsumed.length === 0}
-        {#if sparse}
-          <div class="skeleton skeleton--row"></div>
-          <div class="skeleton skeleton--row"></div>
-          <div class="skeleton skeleton--row"></div>
-        {:else}
-          <p class="insight-card__empty">
-            Not enough movement on your shelves yet to rank consumption.
-          </p>
-        {/if}
-      {:else}
-        <ul class="insight-list">
-          {#each ins.fastestConsumed as item (item.itemId)}
-            <li>
-              <a
-                class="insight-row"
-                href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
-              >
-                {#if item.imageUrl}
-                  <img
-                    class="insight-row__img"
-                    src={item.imageUrl}
-                    alt=""
-                    loading="lazy"
-                    referrerpolicy="no-referrer"
-                  />
-                {:else}
-                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
-                    {item.name.charAt(0).toUpperCase()}
-                  </span>
-                {/if}
-                <div class="insight-row__body">
-                  <p class="insight-row__name">{item.name}</p>
-                  <p class="insight-row__meta">
-                    {formatGramsPerDay(item.gPerDay)} · {Math.round(item.daysObserved)}d observed
-                  </p>
-                </div>
-                <Sparkline
-                  values={item.sparkline}
-                  width={84}
-                  height={28}
-                  strokeWidth={1.5}
-                />
-              </a>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+          {#if sparse || ins.fastestConsumed.length === 0}
+            {#if sparse}
+              <div class="skeleton skeleton--row"></div>
+              <div class="skeleton skeleton--row"></div>
+              <div class="skeleton skeleton--row"></div>
+            {:else}
+              <p class="insight-card__empty">
+                Not enough movement on your shelves yet to rank consumption.
+              </p>
+            {/if}
+          {:else}
+            <ul class="insight-list">
+              {#each ins.fastestConsumed as item (item.itemId)}
+                <li>
+                  <a
+                    class="insight-row"
+                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                  >
+                    {#if item.imageUrl}
+                      <img
+                        class="insight-row__img"
+                        src={item.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                      />
+                    {:else}
+                      <span
+                        class="insight-row__img insight-row__img--placeholder"
+                        aria-hidden="true"
+                      >
+                        {item.name.charAt(0).toUpperCase()}
+                      </span>
+                    {/if}
+                    <div class="insight-row__body">
+                      <p class="insight-row__name">{item.name}</p>
+                      <p class="insight-row__meta">
+                        {formatGramsPerDay(item.gPerDay)} · {Math.round(
+                          item.daysObserved,
+                        )}d observed
+                      </p>
+                    </div>
+                    <Sparkline
+                      values={item.sparkline}
+                      width={84}
+                      height={28}
+                      strokeWidth={1.5}
+                    />
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
 
-    <!-- Always running low -->
-    <section class="insight-card" aria-labelledby="low-heading">
-      <header class="insight-card__head">
-        <span class="insight-card__icon insight-card__icon--warn" aria-hidden="true">
-          <IconAlertTriangle size={20} stroke={1.75} />
-        </span>
-        <div>
-          <h2 id="low-heading" class="insight-card__title">Always running low</h2>
-          <p class="insight-card__subtitle">
-            triggered low-stock most often, last {ins.windowDays} days
-          </p>
-        </div>
-      </header>
+        <!-- Always running low -->
+        <section class="insight-card" aria-labelledby="low-heading">
+          <header class="insight-card__head">
+            <span
+              class="insight-card__icon insight-card__icon--warn"
+              aria-hidden="true"
+            >
+              <IconAlertTriangle size={20} stroke={1.75} />
+            </span>
+            <div>
+              <h2 id="low-heading" class="insight-card__title">
+                Always running low
+              </h2>
+              <p class="insight-card__subtitle">
+                triggered low-stock most often, last {ins.windowDays} days
+              </p>
+            </div>
+          </header>
 
-      {#if sparse || ins.alwaysRunningLow.length === 0}
-        {#if sparse}
-          <div class="skeleton skeleton--row"></div>
-          <div class="skeleton skeleton--row"></div>
-        {:else}
-          <p class="insight-card__empty">
-            Nothing has tripped a low-stock alert in this window.
-          </p>
-        {/if}
-      {:else}
-        <ul class="insight-list">
-          {#each ins.alwaysRunningLow as item (item.itemId)}
-            <li>
-              <a
-                class="insight-row"
-                href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
-              >
-                {#if item.imageUrl}
-                  <img
-                    class="insight-row__img"
-                    src={item.imageUrl}
-                    alt=""
-                    loading="lazy"
-                    referrerpolicy="no-referrer"
-                  />
-                {:else}
-                  <span class="insight-row__img insight-row__img--placeholder" aria-hidden="true">
-                    {item.name.charAt(0).toUpperCase()}
-                  </span>
-                {/if}
-                <div class="insight-row__body">
-                  <p class="insight-row__name">{item.name}</p>
-                  <p class="insight-row__meta">
-                    {item.alertCount} {item.alertCount === 1 ? 'alert' : 'alerts'}
-                  </p>
-                </div>
-              </a>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-  </div>
-  {:catch error}
-    <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" class="insights insights--error">
-      <p class="insights__sparse-title">Couldn't load insights</p>
-      <p class="insights__sparse-body">
-        {error instanceof Error ? error.message : 'Please try refreshing the page.'}
-      </p>
-    </div>
-  {/await}
+          {#if sparse || ins.alwaysRunningLow.length === 0}
+            {#if sparse}
+              <div class="skeleton skeleton--row"></div>
+              <div class="skeleton skeleton--row"></div>
+            {:else}
+              <p class="insight-card__empty">
+                Nothing has tripped a low-stock alert in this window.
+              </p>
+            {/if}
+          {:else}
+            <ul class="insight-list">
+              {#each ins.alwaysRunningLow as item (item.itemId)}
+                <li>
+                  <a
+                    class="insight-row"
+                    href="/shelves/{item.shelfId}#slot-{item.scaleIndex}"
+                  >
+                    {#if item.imageUrl}
+                      <img
+                        class="insight-row__img"
+                        src={item.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                      />
+                    {:else}
+                      <span
+                        class="insight-row__img insight-row__img--placeholder"
+                        aria-hidden="true"
+                      >
+                        {item.name.charAt(0).toUpperCase()}
+                      </span>
+                    {/if}
+                    <div class="insight-row__body">
+                      <p class="insight-row__name">{item.name}</p>
+                      <p class="insight-row__meta">
+                        {item.alertCount}
+                        {item.alertCount === 1 ? 'alert' : 'alerts'}
+                      </p>
+                    </div>
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      </div>
+    {:catch error}
+      <div
+        role="tabpanel"
+        id="panel-insights"
+        aria-labelledby="tab-insights"
+        class="insights insights--error"
+      >
+        <p class="insights__sparse-title">Couldn't load insights</p>
+        <p class="insights__sparse-body">
+          {error instanceof Error
+            ? error.message
+            : 'Please try refreshing the page.'}
+        </p>
+      </div>
+    {/await}
   {/if}
 </main>
 
@@ -1113,7 +1187,9 @@
     opacity: 0.55;
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
-    transition: opacity 0.15s ease, border-color 0.2s ease;
+    transition:
+      opacity 0.15s ease,
+      border-color 0.2s ease;
   }
 
   .tabs__btn:hover,
@@ -1172,7 +1248,10 @@
     border-radius: var(--radius-pill);
     cursor: pointer;
     opacity: 0.6;
-    transition: background-color 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      opacity 0.15s ease,
+      color 0.15s ease;
   }
 
   .range-toggle__btn:hover {
@@ -1348,8 +1427,12 @@
   }
 
   @keyframes skeleton-shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1595,7 +1678,7 @@
       sits visually centered against the lowercase letters rather
       than aligning to the descender line.
     */
-    transform: translateY(-0.10em);
+    transform: translateY(-0.1em);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1605,7 +1688,8 @@
   }
 
   @keyframes greet-pulse {
-    0%, 100% {
+    0%,
+    100% {
       transform: scale(1) rotate(0deg);
     }
     25% {
@@ -1667,278 +1751,161 @@
   }
 
   /*
-    Stat cards sit side-by-side at every viewport so the user can
-    compare "expiring" vs "low stock" at a glance. Each card hosts a
-    horizontally-scrolling tile carousel; with ~150px of width per
-    card on a narrow phone, tiles peek at ~1.5 visible — enough to
-    signal scrollability while keeping the section compact.
+    Now: expiring first, low stock second — each in a surface (white)
+    card. Rows echo inbox typography; icons reuse Insight-tab chips;
+    square product thumbnail on the right.
   */
-  .stat-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  .now-groups {
+    display: flex;
+    flex-direction: column;
     gap: 0.75rem;
   }
 
-  /*
-    Cards intentionally have no surface chrome (no background / border
-    / shadow) so the content floats on the page background and the
-    image tiles below feel like the primary visual elements. The
-    previous left-accent stripe used to differentiate "expiring" vs
-    "low stock" cards visually; that role now falls to the count
-    number which can pick up the urgency tint per card.
-  */
-  .stat-card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0;
+  .now-group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.65rem 0.75rem 0.5rem;
     min-width: 0;
   }
 
-  .stat-card--muted {
+  .now-group__title {
+    margin: 0 0 0.45rem;
+    padding: 0 0.1rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--matcha-deep);
+    opacity: 0.85;
+  }
+
+  .now-group__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .now-group__toggle-wrap {
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: center;
+    padding: 0.2rem 0 0.15rem;
+  }
+
+  .now-group__toggle {
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    color: var(--matcha-deep);
+    opacity: 0.65;
+    padding: 0.45rem 0.75rem;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    border-radius: var(--radius-sm);
+    transition: opacity 0.15s ease;
+  }
+
+  .now-group__toggle:hover,
+  .now-group__toggle:focus-visible {
+    opacity: 1;
+  }
+
+  .now-group__toggle:focus-visible {
+    outline: 2px solid var(--matcha-deep);
+    outline-offset: 0;
+  }
+
+  .now-row + .now-row {
+    border-top: 1px solid var(--border);
+  }
+
+  .now-row__link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 0.1rem;
+    margin: 0 -0.1rem;
+    color: inherit;
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: background-color 0.15s ease;
+    min-width: 0;
+  }
+
+  .now-row__link:hover,
+  .now-row__link:focus-visible {
+    background: rgba(51, 42, 38, 0.04);
+  }
+
+  .now-row__link:focus-visible {
+    outline: 2px solid var(--matcha-deep);
+    outline-offset: 0;
+  }
+
+  .now-row__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .now-row__message {
+    font-size: 0.95rem;
+    line-height: 1.35;
+  }
+
+  .now-row__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    opacity: 0.65;
+    line-height: 1.3;
+  }
+
+  .now-row__type {
+    font-weight: 600;
+    opacity: 0.9;
+  }
+
+  .now-row__type--alert {
+    color: var(--error, #c0392b);
+  }
+
+  .now-row__type--warn {
+    color: var(--warn, #d39e3a);
+  }
+
+  .now-row__type--matcha {
+    color: var(--matcha-deep);
+  }
+
+  .now-row__sep {
     opacity: 0.55;
   }
 
-  .stat-card__head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-  }
-
-  .stat-card__count {
-    font-size: 1.8rem;
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .stat-card__label {
-    font-size: 0.75rem;
-    opacity: 0.65;
-    text-transform: lowercase;
-    letter-spacing: 0.02em;
-  }
-
-  .stat-card__breakdown {
-    margin: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .chip {
-    display: inline-block;
-    padding: 0.1rem 0.45rem;
-    border-radius: var(--radius-pill);
-    background: var(--background);
-    border: 1px solid var(--border);
-    font-size: 0.7rem;
-    letter-spacing: 0.02em;
-  }
-
-  .chip--alert {
-    border-color: var(--error);
-    color: var(--error);
-    background: #fff;
-  }
-
-  .chip--warn {
-    border-color: var(--warn);
-    color: var(--warn);
-    background: var(--warn-soft);
-  }
-
-  /*
-    ── Image-tile scroller (Now-section actions) ─────────────────────
-    Horizontal carousel of fixed-width tiles with scroll-snap and a
-    page-indicator strip underneath. Each card holds its own scroller;
-    the two cards live side-by-side so users can compare "expiring"
-    vs "low stock" at a glance. Tiles are intentionally small (~96px)
-    so ~1.5 peek inside each card's narrow column, hinting that more
-    content is scrollable. Reuses the same IntersectionObserver
-    pattern as the shelf-detail slot carousels for consistency.
-  */
-  .tile-scroll {
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem 0;
-    display: flex;
-    /*
-      Don't stretch children to match the tallest sibling — otherwise
-      a tile with a long product name + meta caption pulls the whole
-      row taller and the `.tile__media`'s `aspect-ratio: 1/1` loses
-      to the parent's vertical stretch, leaving the frame visibly
-      non-square. `flex-start` lets each tile size from its own
-      content.
-    */
-    align-items: flex-start;
-    gap: 0.5rem;
-    overflow-x: auto;
-    overflow-y: hidden;
-    /*
-      `proximity` instead of `mandatory` so wheel-driven smooth
-      scrolls aren't interrupted by the browser yanking the offset
-      back to the nearest tile mid-animation. Touch swipes still
-      feel snappy because proximity engages when the user lets go
-      close to a snap line.
-    */
-    scroll-snap-type: x proximity;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-
-    /*
-      Soft right-edge fade only — toggled by the `tileScrollFade`
-      action via `--fade-right` (0 = fully opaque, 1 = full fade).
-      Left edge is always opaque so the first tile reads cleanly as
-      the start of the row. `--fade-width` is the band size.
-    */
-    --fade-right: 0;
-    --fade-width: 1.25rem;
-    -webkit-mask-image: linear-gradient(
-      to right,
-      #000 0,
-      #000 calc(100% - var(--fade-width)),
-      rgba(0, 0, 0, calc(1 - var(--fade-right))) 100%
-    );
-    mask-image: linear-gradient(
-      to right,
-      #000 0,
-      #000 calc(100% - var(--fade-width)),
-      rgba(0, 0, 0, calc(1 - var(--fade-right))) 100%
-    );
-  }
-
-  .tile-scroll::-webkit-scrollbar {
-    display: none;
-  }
-
-  .tile-scroll__item {
-    flex: 0 0 auto;
-    /*
-      Compact tile width tuned so a ~150px stat-card column shows
-      one tile + a peek of the next. Larger sizes would hide the
-      "scrollable" affordance; smaller would lose image legibility.
-    */
-    width: 6rem;
-    scroll-snap-align: start;
-    min-width: 0;
-  }
-
-  .tile {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    color: inherit;
-    text-decoration: none;
-    min-width: 0;
-  }
-
-  .tile__media {
-    position: relative;
-    aspect-ratio: 1 / 1;
-    width: 100%;
-    box-sizing: border-box;
-    /*
-      `overflow: hidden` clips the absolutely-positioned image to
-      the rounded box. Without the urgency-coloured frame the tile
-      is photo-forward — the corner badge alone carries the status
-      signal, keeping the layout clean and very iOS Photos-like.
-    */
-    overflow: hidden;
-    border-radius: var(--radius-md, 12px);
-    background: var(--surface);
-    transition: transform 0.15s ease;
-  }
-
-  .tile:hover .tile__media,
-  .tile:focus-visible .tile__media {
-    transform: translateY(-1px);
-  }
-
-  .tile:focus-visible .tile__media {
-    outline: 2px solid var(--matcha-deep);
-    outline-offset: 2px;
-  }
-
-  /*
-    Image + placeholder fill the media box exactly. Absolute
-    positioning keeps an intrinsically-portrait image (e.g. a bottle)
-    from pushing the parent's height past the 1:1 aspect ratio.
-    `object-fit: cover` then crops it to fit the square — `width:
-    auto` / `height: auto` would render the image at its natural
-    size, zoomed in from the top-left corner.
-  */
-  .tile__media img,
-  .tile__placeholder {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+  .now-row__thumb {
+    flex-shrink: 0;
+    width: 3rem;
+    height: 3rem;
+    border-radius: var(--radius-md);
     object-fit: cover;
     object-position: center;
-    display: block;
+    background: var(--background);
   }
 
-  .tile__placeholder {
-    display: flex;
+  .now-row__thumb--placeholder {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     background: var(--matcha-soft, rgba(132, 169, 140, 0.18));
     color: var(--matcha-deep, #5e7d68);
-    opacity: 0.8;
-  }
-
-  /*
-    Per-urgency colour tokens consumed by the corner badge. Set on
-    the tile root so a future child (e.g. an overlay or progress
-    indicator) can pick them up without needing its own modifier.
-  */
-  .tile--crit {
-    --tile-badge-bg: var(--error, #c0392b);
-    --tile-badge-fg: #fff;
-  }
-  .tile--warn {
-    --tile-badge-bg: var(--warn, #d39e3a);
-    --tile-badge-fg: #fff;
-  }
-  .tile--ok {
-    --tile-badge-bg: var(--matcha, #84a98c);
-    --tile-badge-fg: #fff;
-  }
-
-  .tile__badge {
-    position: absolute;
-    top: 0.35rem;
-    right: 0.35rem;
-    background: var(--tile-badge-bg);
-    color: var(--tile-badge-fg);
-    font-size: 0.7rem;
-    font-weight: 600;
-    line-height: 1;
-    padding: 0.2rem 0.4rem;
-    border-radius: var(--radius-pill, 999px);
-    letter-spacing: 0.01em;
-    /*
-      Soft drop shadow gives the badge lift and anchors it against
-      bright or cluttered product photos without adding a hard ring.
-    */
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  }
-
-  .tile__name {
-    font-size: 0.8rem;
-    line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    line-clamp: 1;
-    -webkit-box-orient: vertical;
-  }
-
-  .tile__meta {
-    font-size: 0.7rem;
-    opacity: 0.6;
-    line-height: 1.1;
+    opacity: 0.85;
   }
 
   .shelves {
@@ -2145,7 +2112,9 @@
     border-radius: var(--radius-xs);
     border: 1px dashed rgba(51, 42, 38, 0.18);
     background: transparent;
-    transition: background-color 0.3s ease, border-color 0.3s ease;
+    transition:
+      background-color 0.3s ease,
+      border-color 0.3s ease;
   }
 
   /*

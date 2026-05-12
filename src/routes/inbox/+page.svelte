@@ -259,11 +259,11 @@
             <button type="submit" class="inbox-item__btn">
               <span class="inbox-item__icon" aria-hidden="true">
                 {#if u === 'crit'}
-                  <IconAlertOctagon size={20} stroke={2} />
+                  <IconAlertOctagon size={20} stroke={1.75} />
                 {:else if u === 'warn'}
-                  <IconAlertTriangle size={20} stroke={2} />
+                  <IconAlertTriangle size={20} stroke={1.75} />
                 {:else}
-                  <IconBellRinging size={20} stroke={2} />
+                  <IconBellRinging size={20} stroke={1.75} />
                 {/if}
               </span>
               <span class="inbox-item__body">
@@ -421,9 +421,9 @@
   */
   .inbox-item__icon {
     flex-shrink: 0;
-    width: 2.25rem;
-    height: 2.25rem;
-    border-radius: 50%;
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: var(--radius-md);
     display: inline-flex;
     align-items: center;
     justify-content: center;
