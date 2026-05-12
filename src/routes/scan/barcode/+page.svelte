@@ -1,8 +1,36 @@
 <script lang="ts">
   import { enhance }   from '$app/forms'
-  import { goto }      from '$app/navigation'
+  import { goto, replaceState }      from '$app/navigation'
   import { page }      from '$app/stores'
+  import { onMount }   from 'svelte'
   import BarcodeScanner from '$lib/components/BarcodeScanner.svelte'
+  import ShelfSlotPicker from '$lib/components/ShelfSlotPicker.svelte'
+  import { setLastShelfId } from '$lib/scan/lastShelf'
+  import type { PageData } from './$types'
+
+  let { data }: { data: PageData } = $props()
+
+  /*
+    Persist the shelf the user is scanning into so /scan-item can
+    fast-path past the picker next time. Done on entry so the cache
+    captures the user's intent even if they abandon the scan halfway.
+  */
+  onMount(() => {
+    if (data.shelf_id) setLastShelfId(data.shelf_id)
+  })
+
+  function handleSlotPickerChange(next: {
+    shelfId: string
+    slot: number
+    replace: boolean
+  }) {
+    const params = new URLSearchParams($page.url.searchParams)
+    params.set('shelf_id', next.shelfId)
+    params.set('slot', String(next.slot))
+    params.set('replace', next.replace ? '1' : '0')
+    setLastShelfId(next.shelfId)
+    replaceState(`?${params.toString()}`, {})
+  }
 
   // ── URL context ─────────────────────────────────────────────────────────────
   // shelf_id and slot are mandatory. Without them we cannot write to shelf_items.
@@ -252,6 +280,18 @@
 
 <div class="scan-page">
 
+  {#if urlParamsValid && data.shelves && data.shelves.length > 0}
+    <div class="scan-page__picker">
+      <ShelfSlotPicker
+        shelves={data.shelves}
+        slotsByShelf={data.slotsByShelf}
+        shelfId={shelf_id}
+        slot={scale_index}
+        onChange={handleSlotPickerChange}
+      />
+    </div>
+  {/if}
+
   {#if !urlParamsValid}
     <div class="error-card">
       <p class="error-title">Invalid shelf configuration</p>
@@ -462,6 +502,12 @@
     max-width: 500px;
     margin: auto;
     padding: 1rem;
+  }
+
+  .scan-page__picker {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 0.85rem;
   }
 
   .page-header {

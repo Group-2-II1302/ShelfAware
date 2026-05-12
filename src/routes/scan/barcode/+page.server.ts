@@ -1,5 +1,6 @@
 import type { Actions, PageServerLoad } from "./$types";
 import { fail, redirect } from "@sveltejs/kit";
+import { loadShelvesWithSlots } from "$lib/server/loadShelvesWithSlots";
 
 /**
  * Ensures the page has the context required by the Shelves Contract.
@@ -14,10 +15,32 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     data: { session },
   } = await locals.supabase.auth.getSession();
 
+  /*
+    Also load the user's shelves + slot snapshot so the inline pill
+    picker on the scan page can let the user change shelf/slot without
+    bouncing back to /scan-item. Cheap query; falls back to empty on
+    error so the scan itself never blocks on this.
+  */
+  let shelves: Awaited<ReturnType<typeof loadShelvesWithSlots>>["shelves"] = [];
+  let slotsByShelf: Awaited<
+    ReturnType<typeof loadShelvesWithSlots>
+  >["slotsByShelf"] = {};
+  if (session) {
+    try {
+      const res = await loadShelvesWithSlots(locals.supabase);
+      shelves = res.shelves;
+      slotsByShelf = res.slotsByShelf;
+    } catch (e) {
+      console.warn("[scan/barcode] failed to preload shelves:", e);
+    }
+  }
+
   return {
     shelf_id,
     slot,
     isAuthenticated: !!session,
+    shelves,
+    slotsByShelf,
   };
 };
 
