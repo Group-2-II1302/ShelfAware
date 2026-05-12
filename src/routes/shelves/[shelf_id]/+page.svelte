@@ -33,7 +33,7 @@
   let editingName = $state(false)
   let nameDraft = $state('')
   let renameError = $state<string | null>(null)
-  let nameInputEl: HTMLInputElement | undefined
+  let nameInputEl = $state<HTMLInputElement | undefined>(undefined)
 
   /*
     Shelf-level actions (rename / delete) are tucked behind a kebab
@@ -42,7 +42,7 @@
     outside click and Escape, both wired up in onMount below.
   */
   let menuOpen = $state(false)
-  let menuRoot: HTMLDivElement | undefined
+  let menuRoot = $state<HTMLDivElement | undefined>(undefined)
 
   function startEditName() {
     nameDraft = data.shelf.name
