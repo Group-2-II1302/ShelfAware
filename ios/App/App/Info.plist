@@ -47,5 +47,7 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>ShelfAware needs camera access to scan barcodes and read expiry dates.</string>
 </dict>
 </plist>
