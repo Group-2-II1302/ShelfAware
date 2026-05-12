@@ -23,7 +23,6 @@
   import {
     IconPencil,
     IconTrash,
-    IconArrowLeft,
     IconTrendingDown,
     IconAlertTriangle,
     IconLayoutGrid,
@@ -450,12 +449,8 @@
 </svelte:head>
 
 <main class="shelf-page">
-  <a href="/" class="back-link" aria-label="Back to dashboard">
-    <IconArrowLeft size={18} stroke={1.75} />
-    <span>Dashboard</span>
-  </a>
-
   <header class="shelf-header">
+    <a href="/" class="back-link" aria-label="Back to dashboard">←</a>
     {#if editingName}
       <form
         method="POST"
@@ -1122,20 +1117,22 @@
   .back-link {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    margin-bottom: 0.85rem;
-    padding: 0.3rem 0.55rem 0.3rem 0.4rem;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 2.25rem;
+    height: 2.25rem;
+    font: inherit;
+    font-size: 1rem;
+    line-height: 1;
     color: var(--text);
     text-decoration: none;
-    font-size: 0.85rem;
-    opacity: 0.65;
-    border-radius: var(--radius-sm);
-    transition: opacity 0.15s ease, background-color 0.15s ease;
+    flex-shrink: 0;
   }
 
   .back-link:hover,
   .back-link:focus-visible {
-    opacity: 1;
     background: var(--background);
   }
 

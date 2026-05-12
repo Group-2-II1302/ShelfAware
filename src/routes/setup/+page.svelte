@@ -187,7 +187,12 @@
 {#if $setupState.step === "idle"}
     <div class="setup">
         <header class="setup__header">
-            <h1 class="setup__title">Set up your shelf</h1>
+            <div class="setup__header-row">
+                <a class="setup__back" href="/" aria-label="Back to dashboard">
+                    ←
+                </a>
+                <h1 class="setup__title">Set up your shelf</h1>
+            </div>
             <p class="setup__subtitle">
                 Follow these five quick steps to bring your device online.
                 It only takes a couple of minutes.
@@ -400,10 +405,40 @@
         margin-bottom: 1.5rem;
     }
 
+    .setup__header-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.4rem;
+    }
+
+    .setup__back {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        width: 2.25rem;
+        height: 2.25rem;
+        font: inherit;
+        font-size: 1rem;
+        line-height: 1;
+        color: var(--text);
+        text-decoration: none;
+        flex-shrink: 0;
+    }
+
+    .setup__back:hover {
+        background: var(--background);
+    }
+
     .setup__title {
         font-size: 1.6rem;
-        margin: 0 0 0.4rem;
+        margin: 0;
         letter-spacing: -0.01em;
+        flex: 1;
+        min-width: 0;
     }
 
     .setup__subtitle {
