@@ -38,7 +38,10 @@ export async function loadShelvesWithSlots(supabase: SupabaseClient) {
   const shelfIds = (shelves ?? []).map((s) => s.id);
 
   if (shelfIds.length === 0) {
-    return { shelves: [] as ShelfSummary[], slotsByShelf: {} as Record<string, SlotSummary[]> };
+    return {
+      shelves: [] as ShelfSummary[],
+      slotsByShelf: {} as Record<string, SlotSummary[]>,
+    };
   }
 
   const { data: items, error: itemsError } = await supabase
