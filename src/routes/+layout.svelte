@@ -9,7 +9,7 @@
   import NavigationProgress from '$lib/components/NavigationProgress.svelte'
 
   let { data, children } = $props()
-  let { supabase, claims, unreadAlertCount } = $derived(data)
+  let { supabase, claims, unreadAlertCount, hideAppChrome } = $derived(data)
 
   onMount(() => {
     const { data } = supabase.auth.onAuthStateChange((event, _session) => {
@@ -26,10 +26,15 @@
 </svelte:head>
 
 <NavigationProgress />
+{#if !hideAppChrome}
+  <Navbar />
+{/if}
 
 {@render children()}
 
-<Menu />
+{#if !hideAppChrome}
+  <Menu />
+{/if}
 
 {#if claims}
   <AlertsListener {supabase} initialUnread={unreadAlertCount ?? 0} />
