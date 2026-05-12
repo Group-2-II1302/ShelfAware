@@ -26,9 +26,6 @@
 </svelte:head>
 
 <NavigationProgress />
-{#if !hideAppChrome}
-  <Navbar />
-{/if}
 
 {@render children()}
 
