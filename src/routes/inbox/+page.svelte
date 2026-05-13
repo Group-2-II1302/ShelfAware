@@ -11,50 +11,19 @@
     IconBellRinging,
   } from '@tabler/icons-svelte'
   import type { PageData } from './$types'
+  import { classifyAlert, shortAlertLabel } from '$lib/alertsUi'
 
   let { data }: { data: PageData } = $props()
 
   type Notification = PageData['notifications'][number]
 
   /*
-    Classify each alert into one of three urgency buckets so the
-    inbox can mirror the dashboard's colour vocabulary. The mapping:
-
-      crit  → red    : expired food / depleted slots (food-safety
-                       or zero-stock — most urgent)
-      warn  → amber  : expires within ≤2 days, or low_stock alert
-      ok    → matcha : everything else (fallback)
-
-    Alert-type strings come in two flavours due to legacy: "LOWSTOCK"
-    (cron + inbox) and "low_stock" (insights). Handle both.
+    Bucket / label functions live in $lib/alertsUi so the inbox and
+    the realtime toast share one source of truth for urgency colour
+    and short label. Don't inline these here.
   */
-  type Urgency = 'crit' | 'warn' | 'ok'
-
-  function classify(n: Notification): Urgency {
-    const type = (n.alertType ?? '').toUpperCase()
-    if (type === 'LOWSTOCK' || type === 'LOW_STOCK') return 'warn'
-    /*
-      Expiry alert: urgency depends on the time delta. If we don't
-      know (no shelf item / no expiry on file), fall back to `warn`
-      since the alert wouldn't have fired without a reason.
-    */
-    const d = n.daysToExpiry
-    if (d === null || d === undefined) return 'warn'
-    if (d < 0) return 'crit'
-    if (d <= 2) return 'warn'
-    return 'ok'
-  }
-
-  function shortLabel(n: Notification): string {
-    const type = (n.alertType ?? '').toUpperCase()
-    if (type === 'LOWSTOCK' || type === 'LOW_STOCK') return 'Low stock'
-    const d = n.daysToExpiry
-    if (d === null || d === undefined) return 'Heads up'
-    if (d < 0) return 'Expired'
-    if (d === 0) return 'Expires today'
-    if (d <= 2) return 'Expiring soon'
-    return 'Expiring'
-  }
+  const classify = (n: Notification) => classifyAlert(n)
+  const shortLabel = (n: Notification) => shortAlertLabel(n)
 
   /*
     Local mirror of the server-provided list so we can patch it from
@@ -195,6 +164,52 @@
       [id]: { ...existing, readAt: new Date().toISOString() },
     }
   }
+
+  /*
+    Fire-and-forget "mark this read" used when the user navigates to
+    the linked item. We update the local store immediately for the
+    snappy UI response, then POST in the background so the badge /
+    realtime listeners settle. Errors are non-fatal — the cron and
+    auto-resolve logic will eventually reconcile.
+  */
+  async function markReadRemote(id: string) {
+    try {
+      const body = new FormData()
+      body.append('id', id)
+      await fetch('?/markRead', {
+        method: 'POST',
+        body,
+        headers: { 'x-sveltekit-action': 'true' },
+        keepalive: true,
+      })
+    } catch {
+      /* ignore — local store already reflects the change */
+    }
+  }
+
+  /**
+   * Build the deep-link target for a notification. Returns null when
+   * the alert is orphaned (no shelf / slot context), so the UI can
+   * fall back to a non-clickable row.
+   */
+  function itemHref(n: Notification): string | null {
+    if (!n.shelfId || n.scaleIndex === null || n.scaleIndex === undefined) {
+      return null
+    }
+    return `/shelves/${encodeURIComponent(n.shelfId)}#slot-${n.scaleIndex}`
+  }
+
+  function handleItemClick(n: Notification) {
+    /*
+      Optimistic mark-read on click. Even if the row was already read
+      we still navigate; the markReadRemote call short-circuits via
+      markReadLocal's `if (existing.readAt) return` guard.
+    */
+    if (!n.readAt) {
+      markReadLocal(n.id)
+      void markReadRemote(n.id)
+    }
+  }
 </script>
 
 <svelte:head>
@@ -234,6 +249,7 @@
     <ul class="inbox__list">
       {#each list as n (n.id)}
         {@const u = classify(n)}
+        {@const href = itemHref(n)}
         <li
           class="inbox-item inbox-item--{u}"
           class:inbox-item--unread={!n.readAt}
@@ -245,18 +261,18 @@
           out:slide={{ duration: 220, easing: quintOut }}
           animate:flip={{ duration: 320, easing: quintOut }}
         >
-          <form
-            method="POST"
-            action="?/markRead"
-            use:enhance={() => {
-              markReadLocal(n.id)
-              return async ({ update }) => {
-                await update({ reset: false })
-              }
-            }}
-          >
-            <input type="hidden" name="id" value={n.id} />
-            <button type="submit" class="inbox-item__btn">
+          {#if href}
+            <!--
+              Anchor instead of a form so the row deep-links to the
+              item on the shelf page (read or unread). Mark-read is
+              done as a fire-and-forget side effect via fetch in the
+              click handler, so navigation isn't blocked by it.
+            -->
+            <a
+              class="inbox-item__btn"
+              {href}
+              onclick={() => handleItemClick(n)}
+            >
               <span class="inbox-item__icon" aria-hidden="true">
                 {#if u === 'crit'}
                   <IconAlertOctagon size={20} stroke={2} />
@@ -279,8 +295,49 @@
               {#if !n.readAt}
                 <span class="inbox-item__dot" aria-label="Unread"></span>
               {/if}
-            </button>
-          </form>
+            </a>
+          {:else}
+            <!--
+              Orphaned alert (item was deleted) — fall back to the old
+              mark-read-only form so the user can still clear it.
+            -->
+            <form
+              method="POST"
+              action="?/markRead"
+              use:enhance={() => {
+                markReadLocal(n.id)
+                return async ({ update }) => {
+                  await update({ reset: false })
+                }
+              }}
+            >
+              <input type="hidden" name="id" value={n.id} />
+              <button type="submit" class="inbox-item__btn">
+                <span class="inbox-item__icon" aria-hidden="true">
+                  {#if u === 'crit'}
+                    <IconAlertOctagon size={20} stroke={2} />
+                  {:else if u === 'warn'}
+                    <IconAlertTriangle size={20} stroke={2} />
+                  {:else}
+                    <IconBellRinging size={20} stroke={2} />
+                  {/if}
+                </span>
+                <span class="inbox-item__body">
+                  <span class="inbox-item__message">{n.message}</span>
+                  <span class="inbox-item__meta">
+                    <span class="inbox-item__type">{shortLabel(n)}</span>
+                    <span class="inbox-item__sep">·</span>
+                    <span class="inbox-item__time">
+                      {formatRelative(n.lastTriggeredAt, now)}
+                    </span>
+                  </span>
+                </span>
+                {#if !n.readAt}
+                  <span class="inbox-item__dot" aria-label="Unread"></span>
+                {/if}
+              </button>
+            </form>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -407,6 +464,13 @@
     text-align: left;
     font: inherit;
     color: inherit;
+    /*
+      Reset anchor defaults so an `<a>` rendered with this class
+      reads identically to the `<button>` variant used for orphaned
+      alerts.
+    */
+    text-decoration: none;
+    box-sizing: border-box;
   }
 
   .inbox-item__btn:hover {

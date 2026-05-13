@@ -1,29 +1,23 @@
 import { fail, type Actions } from "@sveltejs/kit";
 import type { PageServerLoad } from "./$types";
 
+type ShelfItemJoin = {
+  shelf_id: string | null;
+  scale_index: number | null;
+  barcode: string | null;
+  expiry_date: string | null;
+  product_catalog:
+    | { product_name: string | null }
+    | { product_name: string | null }[]
+    | null;
+};
+
 type AlertRow = {
   id: string;
   alert_type: string;
   last_triggered_at: string | null;
   read_at: string | null;
-  shelf_items:
-    | {
-        barcode: string | null;
-        expiry_date: string | null;
-        product_catalog:
-          | { product_name: string | null }
-          | { product_name: string | null }[]
-          | null;
-      }
-    | {
-        barcode: string | null;
-        expiry_date: string | null;
-        product_catalog:
-          | { product_name: string | null }
-          | { product_name: string | null }[]
-          | null;
-      }[]
-    | null;
+  shelf_items: ShelfItemJoin | ShelfItemJoin[] | null;
 };
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
@@ -36,7 +30,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const { data, error } = await locals.supabase
     .from("alerts")
     .select(
-      "id, alert_type, last_triggered_at, read_at, shelf_items(barcode, expiry_date, product_catalog(product_name))",
+      "id, alert_type, last_triggered_at, read_at, shelf_items(shelf_id, scale_index, barcode, expiry_date, product_catalog(product_name))",
     )
     .is("resolved_at", null)
     .order("last_triggered_at", { ascending: false });
@@ -68,6 +62,14 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
           handles that case explicitly.
         */
         daysToExpiry,
+        /*
+          Shelf + slot context so the client can deep-link the user
+          straight to the offending item on tap. Both null when the
+          alert's shelf_items row was deleted (orphan alert) — the
+          UI degrades to a plain non-clickable list entry.
+        */
+        shelfId: shelf?.shelf_id ?? null,
+        scaleIndex: shelf?.scale_index ?? null,
       };
     }),
   };

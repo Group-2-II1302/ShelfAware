@@ -127,6 +127,17 @@
   let saveError        = $state<string | null>(null)
   let formElement      = $state<HTMLFormElement | null>(null)
 
+  /*
+    When OpenFoodFacts doesn't return a usable full weight we can't
+    compute fullness for the slot, so the confirm step prompts the
+    user to enter it manually before they can continue. Bound to a
+    number input on the confirm card; we treat 0/empty/NaN as invalid
+    and block "Continue" until something positive is entered. The OFF
+    `quantity` string (e.g. "200 g") is shown as a hint when present.
+  */
+  let manualWeightG    = $state<number | null>(null)
+  let weightError      = $state<string | null>(null)
+
   /**
    * State for the "couldn't find this barcode" prompt step. We show it
    * after a scan returns no OpenFoodFacts hit (or the network failed)
@@ -248,6 +259,21 @@
 
   // ── Confirmation handlers ────────────────────────────────────────────────────
   const confirmProduct = () => {
+    /*
+      If OFF didn't give us a weight, require the user to fill in the
+      manual weight input before we proceed. Without it the slot would
+      be uncalibrated and never produce a fullness bar or low-stock
+      alert — which defeats the point of the device.
+    */
+    if (foundProduct && (!foundProduct.full_weight_g || foundProduct.full_weight_g <= 0)) {
+      const w = Number(manualWeightG)
+      if (!Number.isFinite(w) || w <= 0) {
+        weightError = 'Enter the product weight to continue.'
+        return
+      }
+      foundProduct = { ...foundProduct, full_weight_g: Math.round(w) }
+    }
+    weightError = null
     confirmedProduct = true
   }
 
@@ -260,6 +286,8 @@
     lookupNetworkError    = false
     lookupErrorDetail     = ''
     manualEntryBarcode    = ''
+    manualWeightG         = null
+    weightError           = null
   }
 
   // ── "Product not found" prompt handlers ─────────────────────────────────────
@@ -426,15 +454,50 @@
             <dt>Barcode</dt>
             <dd>{foundProduct.barcode}</dd>
           </div>
-          <div class="confirm-card__meta-row">
-            <dt>Full weight</dt>
-            <dd>
-              {foundProduct.full_weight_g > 0
-                ? `${foundProduct.full_weight_g} g`
-                : 'Unknown — slot will be uncalibrated'}
-            </dd>
-          </div>
+          {#if foundProduct.full_weight_g > 0}
+            <div class="confirm-card__meta-row">
+              <dt>Full weight</dt>
+              <dd>{foundProduct.full_weight_g} g</dd>
+            </div>
+          {/if}
         </dl>
+
+        {#if !(foundProduct.full_weight_g > 0)}
+          {@const offQuantity = (foundProduct.nutrition_facts as any)?.quantity as string | null | undefined}
+          <div class="weight-prompt">
+            <label class="weight-prompt__label" for="manual-weight">
+              Product weight
+            </label>
+            <p class="weight-prompt__hint">
+              We couldn't find this product's weight. Enter it from the
+              packaging so the shelf can track fullness.
+              {#if offQuantity}
+                <br />
+                <span class="weight-prompt__off">
+                  Hint from catalog: <strong>{offQuantity}</strong>
+                </span>
+              {/if}
+            </p>
+            <div class="weight-prompt__row">
+              <input
+                id="manual-weight"
+                type="number"
+                inputmode="numeric"
+                min="1"
+                step="1"
+                placeholder="e.g. 250"
+                bind:value={manualWeightG}
+                oninput={() => (weightError = null)}
+                class="weight-prompt__input"
+                aria-invalid={weightError ? 'true' : undefined}
+              />
+              <span class="weight-prompt__unit">g</span>
+            </div>
+            {#if weightError}
+              <p class="weight-prompt__error" role="alert">{weightError}</p>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <div class="confirm-card__actions">
@@ -800,6 +863,77 @@
 
   .confirm-card__actions .btn-secondary:hover {
     background: var(--matcha-soft);
+  }
+
+  /* ── Weight prompt (when OFF didn't return a weight) ─────────────────── */
+  .weight-prompt {
+    margin-top: 0.75rem;
+    padding: 0.75rem 0.85rem;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .weight-prompt__label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .weight-prompt__hint {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--text);
+    opacity: 0.75;
+  }
+
+  .weight-prompt__off {
+    opacity: 0.85;
+  }
+
+  .weight-prompt__row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .weight-prompt__input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.55rem 0.7rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .weight-prompt__input:focus {
+    border-color: var(--matcha);
+    box-shadow: 0 0 0 3px var(--matcha-soft);
+  }
+
+  .weight-prompt__input[aria-invalid="true"] {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px rgba(164, 0, 0, 0.12);
+  }
+
+  .weight-prompt__unit {
+    font-size: 0.9rem;
+    opacity: 0.7;
+  }
+
+  .weight-prompt__error {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--error);
   }
 
   code {

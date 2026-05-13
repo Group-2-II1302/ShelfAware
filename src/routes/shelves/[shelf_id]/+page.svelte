@@ -234,8 +234,17 @@
     arrives, so any divergence self-heals.
   */
   type LiveItemPatch = {
-    current_weight_g: number | null
-    state: number | null
+    /*
+      All fields optional: realtime weight pings only know about
+      current_weight_g/state, while modal edits may touch any subset
+      of these. patchSlot merges by overlaying defined keys.
+    */
+    current_weight_g?: number | null
+    state?: number | null
+    product_name?: string | null
+    full_weight_g?: number | null
+    tare_weight_g?: number | null
+    expiry_date?: string | null
   }
   let liveItemPatches = $state<Record<string, LiveItemPatch>>({})
 
@@ -391,6 +400,46 @@
     return confirm(`Remove "${productLabel}" from this slot?`)
   }
 
+  /*
+    Inline "Calibrate now" prompt for uncalibrated slots. Only one can
+    be open at a time (`calibratingSlot`), and we stash the draft
+    weight + per-slot error keyed by scale_index so multiple slots
+    don't stomp on each other if the user toggles between them.
+  */
+  let calibratingSlot  = $state<number | null>(null)
+  let calibrateLabel   = $state<string>('')
+  let calibrateBarcode = $state<string>('')
+  let calibrateWeight  = $state<number | null>(null)
+  let calibrateError   = $state<string | null>(null)
+  let calibrateBusy    = $state(false)
+  let calibrateDialog  = $state<HTMLDialogElement | null>(null)
+  let calibrateInputEl = $state<HTMLInputElement | null>(null)
+
+  function startCalibration(slot: { scale_index: number; item: { product_name: string | null; barcode: string } }) {
+    calibratingSlot  = slot.scale_index
+    calibrateLabel   = slot.item.product_name ?? slot.item.barcode
+    calibrateBarcode = slot.item.barcode
+    calibrateWeight  = null
+    calibrateError   = null
+    /*
+      <dialog>.showModal() handles the backdrop, focus trap, and
+      Escape-to-close for free. We defer to the next tick so the
+      element is in the DOM when we call it.
+    */
+    queueMicrotask(() => {
+      calibrateDialog?.showModal()
+      calibrateInputEl?.focus()
+    })
+  }
+
+  function cancelCalibration() {
+    if (calibrateBusy) return
+    calibrateDialog?.close()
+    calibratingSlot = null
+    calibrateWeight = null
+    calibrateError  = null
+  }
+
   const dateFormatter = new Intl.DateTimeFormat('en-GB')
 
   function formatExpiryDate(expiryDate: string | null) {
@@ -426,14 +475,62 @@
     if (slot.status !== 'filled') return slot
     const patch = liveItemPatches[slot.item.id]
     if (!patch) return slot
-    return {
-      ...slot,
-      item: {
-        ...slot.item,
-        current_weight_g: patch.current_weight_g,
-        state: patch.state,
-      },
+    /*
+      Spread only the patch keys that were actually set, so a partial
+      patch (e.g. only product_name from a modal edit) doesn't blank
+      out fields it doesn't know about.
+    */
+    const merged = { ...slot.item, ...patch }
+    /*
+      If the patch touched calibration weights but not state, recompute
+      state from the merged values so the fullness bar and bucket
+      colour stay in sync without waiting for the server invalidate.
+    */
+    if (
+      patch.state === undefined &&
+      (patch.full_weight_g !== undefined || patch.tare_weight_g !== undefined)
+    ) {
+      merged.state = computeState(
+        merged.current_weight_g,
+        merged.full_weight_g,
+        merged.tare_weight_g,
+      )
     }
+    return { ...slot, item: merged }
+  }
+
+  /*
+    Bridge between the modal's per-field saves and the slot grid's
+    optimistic patch map. We layer the patch in immediately so the
+    card reflects the change while the bg invalidate refreshes
+    insights / catalog joins server-side.
+  */
+  async function handleItemEdit(patch: import('$lib/components/ProductDetailsModal.svelte').ItemEditPatch) {
+    const next: LiveItemPatch = { ...(liveItemPatches[patch.itemId] ?? {}) }
+    if (patch.kind === 'expiry') {
+      next.expiry_date = patch.expiry_date
+    } else {
+      if (patch.product_name !== undefined) next.product_name = patch.product_name
+      if (patch.full_weight_g !== undefined) next.full_weight_g = patch.full_weight_g
+      if (patch.tare_weight_g !== undefined) next.tare_weight_g = patch.tare_weight_g
+    }
+    liveItemPatches = { ...liveItemPatches, [patch.itemId]: next }
+
+    /*
+      Reflect the change in the currently-open modal too, otherwise
+      the user sees their save "snap back" until the server load
+      completes.
+    */
+    if (activeItem && activeItem.id === patch.itemId) {
+      activeItem = { ...activeItem, ...next } as typeof activeItem
+    }
+
+    /*
+      User-initiated edit, so revalidate immediately rather than going
+      through the 30s debounce used for noisy realtime weight pings.
+      The optimistic patch above means there's no visual flash.
+    */
+    await invalidate('app:shelf-detail')
   }
 
   function slotsForZone(zoneSlotIndices: readonly number[]) {
@@ -653,7 +750,7 @@
                         ></span>
                       </span>
                     {:else}
-                      <span class="slot-state__label">
+                      <span class="slot-state__label slot-state__label--uncal">
                         {stateLabel(slot.item.state)}
                       </span>
                     {/if}
@@ -724,6 +821,17 @@
                     </button>
                   </form>
                 </div>
+
+                {#if slot.item.state === null && slot.item.full_weight_g === null}
+                  <button
+                    type="button"
+                    class="calibrate-cta"
+                    onclick={() => startCalibration(slot)}
+                  >
+                    <IconAlertTriangle size={14} stroke={2} />
+                    <span>Calibrate now</span>
+                  </button>
+                {/if}
               </article>
             {:else}
               <a
@@ -1100,7 +1208,111 @@
   {/if}
 </main>
 
-<ProductDetailsModal item={activeItem} onclose={closeDetails} />
+<ProductDetailsModal item={activeItem} onclose={closeDetails} onSave={handleItemEdit} />
+
+<!--
+  Centered calibrate-now modal. Uses native <dialog> so we get the
+  backdrop, focus trap, and Escape-to-close for free. Click on the
+  backdrop also dismisses (via the ::backdrop region check below).
+-->
+<dialog
+  bind:this={calibrateDialog}
+  class="calibrate-modal"
+  onclose={() => {
+    calibratingSlot = null
+    calibrateError  = null
+    calibrateWeight = null
+  }}
+  onclick={(e) => {
+    if (e.target === calibrateDialog && !calibrateBusy) {
+      cancelCalibration()
+    }
+  }}
+>
+  {#if calibratingSlot !== null}
+    <form
+      method="POST"
+      action="?/calibrateItem"
+      class="calibrate-modal__panel"
+      use:enhance={() => {
+        calibrateBusy = true
+        calibrateError = null
+        return async ({ result, update }) => {
+          if (result.type === 'failure') {
+            const data = result.data as
+              | { calibrate?: { error?: string } }
+              | undefined
+            calibrateError =
+              data?.calibrate?.error ?? 'Could not save weight.'
+          } else if (result.type === 'error') {
+            calibrateError = result.error?.message ?? 'Save failed.'
+          } else {
+            await update()
+            calibrateDialog?.close()
+          }
+          calibrateBusy = false
+        }
+      }}
+    >
+      <input type="hidden" name="scale_index" value={calibratingSlot} />
+
+      <header class="calibrate-modal__header">
+        <h2 class="calibrate-modal__title">Calibrate slot</h2>
+        <p class="calibrate-modal__subtitle">{calibrateLabel}</p>
+      </header>
+
+      <p class="calibrate-modal__hint">
+        Enter the product's full weight from its packaging so the shelf
+        can track fullness and warn you when it's running low.
+      </p>
+
+      <label class="calibrate-modal__label" for="calibrate-modal-weight">
+        Full weight
+      </label>
+      <div class="calibrate-modal__row">
+        <input
+          bind:this={calibrateInputEl}
+          id="calibrate-modal-weight"
+          name="full_weight_g"
+          type="number"
+          inputmode="numeric"
+          min="1"
+          step="1"
+          placeholder="e.g. 250"
+          bind:value={calibrateWeight}
+          oninput={() => (calibrateError = null)}
+          required
+          disabled={calibrateBusy}
+          aria-invalid={calibrateError ? 'true' : undefined}
+          class="calibrate-modal__input"
+        />
+        <span class="calibrate-modal__unit">g</span>
+      </div>
+
+      {#if calibrateError}
+        <p class="calibrate-modal__error" role="alert">{calibrateError}</p>
+      {/if}
+
+      <div class="calibrate-modal__actions">
+        <button
+          type="button"
+          class="calibrate-modal__btn calibrate-modal__btn--secondary"
+          onclick={cancelCalibration}
+          disabled={calibrateBusy}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="calibrate-modal__btn calibrate-modal__btn--primary"
+          disabled={calibrateBusy}
+        >
+          {calibrateBusy ? 'Saving…' : 'Save weight'}
+        </button>
+      </div>
+    </form>
+  {/if}
+</dialog>
 
 <style>
   .shelf-page {
@@ -1708,6 +1920,197 @@
   .slot-state__label {
     color: var(--state-color, inherit);
     font-weight: 500;
+  }
+
+  .slot-state__label--uncal {
+    color: var(--warn);
+  }
+
+  /* ── Calibrate-now affordance for uncalibrated slots ─────────────────── */
+  .calibrate-cta {
+    margin-top: 0.4rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.4rem 0.7rem;
+    background: var(--warn-soft);
+    color: var(--warn);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+
+  .calibrate-cta:hover {
+    background: color-mix(in srgb, var(--warn) 18%, var(--warn-soft));
+  }
+
+  .calibrate-cta:active {
+    transform: translateY(1px);
+  }
+
+  /* ── Calibrate modal ─────────────────────────────────────────────────── */
+  .calibrate-modal {
+    /*
+      Native <dialog> centers itself via the user-agent stylesheet
+      (margin: auto). We just override the chrome to match the app
+      theme. ::backdrop handles the dimmed background.
+    */
+    width: min(92vw, 24rem);
+    max-width: 24rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    overflow: visible;
+  }
+
+  .calibrate-modal::backdrop {
+    background: rgba(20, 16, 14, 0.55);
+    backdrop-filter: blur(2px);
+  }
+
+  .calibrate-modal__panel {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    padding: 1.1rem 1.1rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  }
+
+  .calibrate-modal__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-bottom: 0.1rem;
+  }
+
+  .calibrate-modal__title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .calibrate-modal__subtitle {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text);
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .calibrate-modal__hint {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--text);
+    opacity: 0.75;
+  }
+
+  .calibrate-modal__label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .calibrate-modal__row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .calibrate-modal__input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.6rem 0.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .calibrate-modal__input:focus {
+    border-color: var(--matcha);
+    box-shadow: 0 0 0 3px var(--matcha-soft);
+  }
+
+  .calibrate-modal__input[aria-invalid="true"] {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px rgba(164, 0, 0, 0.12);
+  }
+
+  .calibrate-modal__unit {
+    font-size: 0.9rem;
+    opacity: 0.7;
+  }
+
+  .calibrate-modal__error {
+    margin: 0;
+    padding: 0.45rem 0.6rem;
+    background: rgba(164, 0, 0, 0.08);
+    border-left: 3px solid var(--error);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    color: var(--error);
+  }
+
+  .calibrate-modal__actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.3rem;
+  }
+
+  .calibrate-modal__btn {
+    flex: 1;
+    padding: 0.65rem 0.8rem;
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+
+  .calibrate-modal__btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .calibrate-modal__btn--primary {
+    background: var(--text);
+    color: var(--background);
+  }
+
+  .calibrate-modal__btn--primary:hover:not(:disabled) {
+    background: #1f1916;
+  }
+
+  .calibrate-modal__btn--primary:active:not(:disabled),
+  .calibrate-modal__btn--secondary:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .calibrate-modal__btn--secondary {
+    background: var(--background);
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  .calibrate-modal__btn--secondary:hover:not(:disabled) {
+    background: var(--matcha-soft);
   }
 
   .slot-state--empty {

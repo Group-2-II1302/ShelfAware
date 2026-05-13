@@ -119,6 +119,21 @@ export const actions: Actions = {
       });
     }
 
+    /*
+      Calibration is required for every shelf item: without a positive
+      full_weight_g the slot can't compute fullness or fire low-stock
+      alerts, which makes the whole device useless for that product.
+      The client UI now blocks submission when this is missing, but
+      enforce it here too so direct POSTs / stale clients can't slip
+      uncalibrated items into the catalog.
+    */
+    if (full_weight_g <= 0) {
+      return fail(400, {
+        error:
+          "Product weight is required so the shelf can track fullness. Please enter the weight in grams.",
+      });
+    }
+
     // 3. STEP 1: Upsert to product_catalog (Global Metadata)
     /*
       Only include nutrition_facts in the upsert when we actually have it,
@@ -131,11 +146,9 @@ export const actions: Actions = {
       product_name,
       brand,
       image_url,
+      full_weight_g,
       unit: "g",
     };
-    if (full_weight_g > 0) {
-      catalogPayload.full_weight_g = full_weight_g;
-    }
     if (nutrition_facts !== null) {
       catalogPayload.nutrition_facts = nutrition_facts;
     }

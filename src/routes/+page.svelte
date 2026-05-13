@@ -1722,7 +1722,16 @@
     margin: 0;
     display: flex;
     flex-wrap: wrap;
+    align-content: flex-start;
     gap: 0.3rem;
+    /*
+      Reserve space for up to two rows of chips so the two stat-cards
+      stay vertically aligned even when one has more buckets than the
+      other (e.g. expiring shows expired+today+this-week → 2 rows,
+      while low-stock only shows empty+low → 1 row). Sized off the
+      chip metrics: ~1.5em line height per row + 0.3rem inter-row gap.
+    */
+    min-height: calc(2 * 1.5em + 0.3rem);
   }
 
   .chip {
