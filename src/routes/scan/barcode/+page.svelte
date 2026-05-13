@@ -281,7 +281,7 @@
 <div class="scan-page">
 
   <div class="scan-page__top">
-    <a class="scan-page__back" href="/scan-item" aria-label="Back">←</a>
+    <a class="scan-page__back" href="/" aria-label="Back to dashboard">←</a>
     {#if urlParamsValid && data.shelves && data.shelves.length > 0}
       <ShelfSlotPicker
         shelves={data.shelves}

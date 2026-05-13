@@ -50,7 +50,7 @@
 
 <div class="ocr-page">
   <div class="ocr-page__top">
-    <a class="ocr-page__back" href="/scan-item" aria-label="Back">←</a>
+    <a class="ocr-page__back" href="/" aria-label="Back to dashboard">←</a>
   </div>
 
   {#if !urlParamsValid}
