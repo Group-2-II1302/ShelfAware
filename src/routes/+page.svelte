@@ -54,7 +54,7 @@
   /*
     Max rows shown per notification group before "Show more" reveals the rest. 
   */
-  const NOW_LIST_PREVIEW = 3
+  const NOW_LIST_PREVIEW = 2
   let nowExpiringExpanded = $state(false)
   let nowLowStockExpanded = $state(false)
 
