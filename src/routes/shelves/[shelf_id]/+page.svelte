@@ -25,6 +25,7 @@
     IconTrash,
     IconTrendingDown,
     IconAlertTriangle,
+    IconAlertOctagon,
     IconLayoutGrid,
     IconDotsVertical,
   } from '@tabler/icons-svelte'
@@ -367,8 +368,16 @@
   onDestroy(() => {
     if (invalidateTimer) clearTimeout(invalidateTimer)
     if (channel) channel.unsubscribe()
-    document.removeEventListener('click', handleDocClick)
-    document.removeEventListener('keydown', handleDocKey)
+    /*
+      onDestroy can fire during SSR teardown (when a render aborts
+      mid-way), where `document` is undefined. The matching
+      addEventListener calls live inside onMount which only runs in
+      the browser, so this is purely a defensive guard.
+    */
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('click', handleDocClick)
+      document.removeEventListener('keydown', handleDocKey)
+    }
   })
 
   /**
@@ -463,6 +472,55 @@
   function stateModifier(state: number | null) {
     const bucket = bucketFromState(state)
     return bucket === null ? 'uncalibrated' : bucket
+  }
+
+  /*
+    Expiry urgency bucketing — mirrors the dashboard tile badges so
+    the shelf view speaks the same colour language as the rest of
+    the app. Buckets:
+      expired → red    : already past the date (food-safety risk)
+      today   → amber  : expires today
+      soon    → amber  : expires within ≤ 3 days
+      ok      → matcha : > 3 days out
+      none    → null   : no date on file (rendered as muted text)
+  */
+  type ExpiryBucket = 'expired' | 'today' | 'soon' | 'ok' | 'none'
+
+  function expiryBucket(expiryDate: string | null): ExpiryBucket {
+    if (!expiryDate) return 'none'
+    const startOfToday = new Date(new Date().toISOString().split('T')[0]).getTime()
+    const days = Math.ceil(
+      (new Date(expiryDate).getTime() - startOfToday) / 86_400_000,
+    )
+    if (days < 0) return 'expired'
+    if (days === 0) return 'today'
+    if (days <= 3) return 'soon'
+    return 'ok'
+  }
+
+  /*
+    Short human label for the expiry pill. Day-counts up to a week
+    out are spelled relative ("in 5 days") because that's what the
+    user actually wants to know at a glance; further out we fall
+    back to the absolute date so the pill doesn't read as alarming
+    when there's nothing to act on.
+  */
+  function expiryLabel(expiryDate: string | null): string {
+    if (!expiryDate) return 'no expiry date'
+    const startOfToday = new Date(new Date().toISOString().split('T')[0]).getTime()
+    const days = Math.ceil(
+      (new Date(expiryDate).getTime() - startOfToday) / 86_400_000,
+    )
+    if (days < 0) {
+      const ago = Math.abs(days)
+      if (ago === 1) return 'expired yesterday'
+      if (ago <= 30) return `expired ${ago}d ago`
+      return `expired ${dateFormatter.format(new Date(expiryDate))}`
+    }
+    if (days === 0) return 'expires today'
+    if (days === 1) return 'expires tomorrow'
+    if (days <= 7) return `expires in ${days}d`
+    return `expires ${dateFormatter.format(new Date(expiryDate))}`
   }
 
   /*
@@ -698,6 +756,7 @@
         {#each slotsForZone(zone.slotIndices) as slot (slot.scale_index)}
           <li class="slot" id="slot-{slot.scale_index}">
             {#if slot.status === 'filled'}
+              {@const eb = expiryBucket(slot.item.expiry_date)}
               <article class="slot-card slot-card--filled">
                 <!--
                   The card body itself is a button — tapping anywhere
@@ -755,8 +814,18 @@
                       </span>
                     {/if}
                   </p>
-                  <p class="slot-expiry">
-                    expires: {formatExpiryDate(slot.item.expiry_date)}
+                  <p
+                    class="slot-expiry slot-expiry--{eb}"
+                    title={slot.item.expiry_date
+                      ? formatExpiryDate(slot.item.expiry_date)
+                      : 'No expiry date on file'}
+                  >
+                    {#if eb === 'expired'}
+                      <IconAlertOctagon size={14} stroke={2} aria-hidden="true" />
+                    {:else if eb === 'today' || eb === 'soon'}
+                      <IconAlertTriangle size={14} stroke={2} aria-hidden="true" />
+                    {/if}
+                    <span class="slot-expiry__label">{expiryLabel(slot.item.expiry_date)}</span>
                   </p>
                 </button>
 
@@ -1902,9 +1971,16 @@
   */
   .slot-state__bar {
     flex: 1 1 100%;
-    height: 4px;
+    /*
+      Beefier bar so the fullness state is legible at a glance from
+      across the room, not just on close inspection. Pairs with a
+      subtle inner shadow on the empty track to keep depth even
+      when the fill is short.
+    */
+    height: 8px;
     border-radius: var(--radius-pill);
     background: var(--background);
+    box-shadow: inset 0 0 0 1px rgba(51, 42, 38, 0.06);
     overflow: hidden;
     display: inline-block;
   }
@@ -2139,11 +2215,72 @@
     opacity: 0.85;
   }
 
+  /*
+    Expiry pill: at-a-glance urgency next to the fullness bar.
+    Coloured by .slot-expiry--<bucket>; uncoloured for "ok" / "none"
+    so a healthy slot doesn't visually compete with attention-needing
+    ones. Renders tight to the icon when one is present.
+  */
   .slot-expiry {
-    margin: 0.35rem 0 0;
-    font-size: 0.875rem;
-    line-height: 1.3;
+    margin: 0.45rem 0 0;
+    padding: 0.25rem 0.55rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    line-height: 1.2;
+    font-weight: 500;
+    border-radius: var(--radius-pill);
+    border: 1px solid transparent;
+    background: var(--background);
+    color: var(--text);
     overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+
+  .slot-expiry :global(svg) {
+    flex-shrink: 0;
+  }
+
+  .slot-expiry__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .slot-expiry--expired {
+    background: rgba(192, 57, 43, 0.1);
+    border-color: rgba(192, 57, 43, 0.35);
+    color: var(--error, #c0392b);
+    font-weight: 600;
+  }
+
+  .slot-expiry--today {
+    background: rgba(211, 158, 58, 0.14);
+    border-color: rgba(211, 158, 58, 0.45);
+    color: var(--warn, #d39e3a);
+    font-weight: 600;
+  }
+
+  .slot-expiry--soon {
+    background: rgba(211, 158, 58, 0.1);
+    border-color: rgba(211, 158, 58, 0.35);
+    color: var(--warn, #d39e3a);
+  }
+
+  .slot-expiry--ok {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text);
+    opacity: 0.75;
+  }
+
+  .slot-expiry--none {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text);
+    opacity: 0.55;
+    font-style: italic;
   }
 
   .slot-action {
