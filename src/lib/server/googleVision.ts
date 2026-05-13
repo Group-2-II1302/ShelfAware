@@ -55,9 +55,9 @@ function parsePem(raw: string): ArrayBuffer {
   // 2. Normalise common escape / line-ending variants.
   cleaned = cleaned
     .replace(/\\r\\n/g, "\n") // literal "\r\n" from JSON-encoded values
-    .replace(/\\n/g, "\n")    // literal "\n"
-    .replace(/\r\n/g, "\n")   // CRLF -> LF
-    .replace(/\r/g, "\n");    // bare CR -> LF
+    .replace(/\\n/g, "\n") // literal "\n"
+    .replace(/\r\n/g, "\n") // CRLF -> LF
+    .replace(/\r/g, "\n"); // bare CR -> LF
 
   // 3. Strip the PEM header / footer (case-insensitive, tolerant of
   //    extra whitespace inside the markers themselves).
