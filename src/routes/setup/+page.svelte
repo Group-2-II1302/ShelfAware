@@ -364,7 +364,7 @@
             {:else}
                 <p class="setup__hint">
                     We'll watch for your device to come online. This usually
-                    takes 1–6 minutes.
+                    takes up to 2 minutes.
                 </p>
             {/if}
         </div>
@@ -454,28 +454,39 @@
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 0.75rem;
+        /*
+          Roomier inter-step spacing now that the steps no longer
+          have card backgrounds — the empty space is what separates
+          one step from the next, so it has to do more work.
+        */
+        gap: 1.5rem;
         position: relative;
     }
 
     .step {
+        /*
+          Background-less variant: each step sits directly on the
+          page surface so the stepper reads as a single floating
+          column of content. The connecting line below glues the
+          markers together visually instead of card edges doing it.
+        */
         position: relative;
         display: grid;
         grid-template-columns: 2.25rem 1fr;
         gap: 0.85rem;
-        background: var(--surface);
-        border-radius: var(--radius-md);
-        padding: 0.9rem 1rem 1rem;
-        box-shadow: 0 1px 2px rgba(51, 42, 38, 0.04);
+        padding: 0.25rem 0 0.5rem;
     }
 
-    /* Connecting line behind the markers. */
+    /*
+      Connecting line behind the markers. Bridges across the gap
+      between steps too so the column doesn't break visually.
+    */
     .step:not(:last-child)::after {
         content: "";
         position: absolute;
-        left: calc(1rem + 1.125rem - 1px);
-        top: calc(0.9rem + 2.25rem);
-        bottom: -0.75rem;
+        left: calc(1.125rem - 1px);
+        top: calc(0.25rem + 2.25rem + 0.25rem);
+        bottom: -1.5rem;
         width: 2px;
         background: var(--matcha-soft);
         border-radius: 1px;

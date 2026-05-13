@@ -27,7 +27,7 @@ export async function waitForNewShelf(
     onProgress?: (outcome: PollOutcome) => void;
   } = {},
 ): Promise<string> {
-  const timeoutMs = opts.timeoutMs ?? 360_000; // 6 minutes
+  const timeoutMs = opts.timeoutMs ?? 240_000; // 4 minutes
   const pollIntervalMs = opts.pollIntervalMs ?? 3_000;
   const onProgress = opts.onProgress;
 

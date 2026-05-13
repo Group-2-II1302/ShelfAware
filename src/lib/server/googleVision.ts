@@ -26,20 +26,78 @@ function b64urlFromBytes(bytes: Uint8Array): string {
 
 /**
  * Parse a PEM private key string from an environment variable.
- * Handles both real newlines and the literal "\n" that .env files produce.
+ * Handles every wire format we've seen in the wild:
+ *   - Real newlines (typical when pasted into Cloudflare's dashboard
+ *     as a multi-line secret).
+ *   - Literal "\n" pairs (typical from a single-line .env value or a
+ *     JSON-serialised credentials blob).
+ *   - CRLF line endings (Windows clipboards).
+ *   - Surrounding double or single quotes (some users paste with the
+ *     JSON quotes still attached).
+ *   - Unicode "smart quotes" (when the value was copied via a word
+ *     processor instead of a plain text editor).
+ *   - Stray non-base64 characters anywhere in the body — we filter
+ *     down to the base64 alphabet before atob() so a stray char
+ *     can't take down the whole decode.
  */
 function parsePem(raw: string): ArrayBuffer {
-  const pem = raw
-    .replace(/\\n/g, "\n") // literal \n from .env
-    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
-    .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\s+/g, ""); // strip all whitespace / newlines
+  let cleaned = raw;
 
-  const bytes = Uint8Array.from(atob(pem), (c) => c.charCodeAt(0));
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
+  // 1. Strip wrapping quotes if the user pasted them along with the value.
+  cleaned = cleaned.trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1);
+  }
+
+  // 2. Normalise common escape / line-ending variants.
+  cleaned = cleaned
+    .replace(/\\r\\n/g, "\n") // literal "\r\n" from JSON-encoded values
+    .replace(/\\n/g, "\n") // literal "\n"
+    .replace(/\r\n/g, "\n") // CRLF -> LF
+    .replace(/\r/g, "\n"); // bare CR -> LF
+
+  // 3. Strip the PEM header / footer (case-insensitive, tolerant of
+  //    extra whitespace inside the markers themselves).
+  cleaned = cleaned
+    .replace(/-----\s*BEGIN[^-]*-----/i, "")
+    .replace(/-----\s*END[^-]*-----/i, "");
+
+  // 4. Drop everything that isn't part of the base64 alphabet. This is
+  //    a belt-and-braces measure — after the steps above the body
+  //    should already be clean, but if Cloudflare or a clipboard ever
+  //    sneaks in a stray BOM, smart quote, or zero-width space, we
+  //    don't want atob() to throw a [502].
+  const filtered = cleaned.replace(/[^A-Za-z0-9+/=]/g, "");
+
+  if (!filtered) {
+    throw new Error(
+      "GOOGLE_PRIVATE_KEY parsed to an empty body. Check the env var contents.",
+    );
+  }
+
+  try {
+    const bytes = Uint8Array.from(atob(filtered), (c) => c.charCodeAt(0));
+    return bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+  } catch (e) {
+    /*
+      Surface enough structural info for diagnosis without ever
+      logging the key itself. Length + a hash of the cleaned body
+      tells us whether redeploys actually changed the value, and
+      mod-4 tells us if base64 padding is off.
+    */
+    const len = filtered.length;
+    const mod = len % 4;
+    throw new Error(
+      `GOOGLE_PRIVATE_KEY failed to decode (len=${len}, len%4=${mod}). ` +
+        `Original cause: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 /**

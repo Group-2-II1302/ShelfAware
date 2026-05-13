@@ -9,19 +9,60 @@
    * Animations are layered on top via the [open] attribute and the
    * ::backdrop pseudo-element.
    */
+  import { deserialize } from '$app/forms'
+  import type { ActionResult } from '@sveltejs/kit'
 
   type Item = {
+    id: string
     barcode: string
     product_name: string | null
     brand: string | null
     image_url: string | null
     full_weight_g: number | null
+    /**
+     * Tare (empty container) weight from product_catalog. Optional;
+     * when present it's used for more accurate fullness math on the
+     * slot card. Editable here.
+     */
+    tare_weight_g: number | null
     current_weight_g: number | null
     expiry_date: string | null
     nutrition_facts: Record<string, unknown> | null
   }
 
-  let { item, onclose }: { item: Item | null; onclose: () => void } = $props()
+  /**
+   * Patch shape the modal hands back to the parent after a successful
+   * save. The parent merges this into its `liveItemPatches` so the
+   * slot card reflects the change immediately, then triggers a
+   * server invalidation in the background to reconcile.
+   */
+  export type ItemEditPatch =
+    | { kind: 'expiry'; itemId: string; expiry_date: string | null }
+    | {
+        kind: 'product'
+        itemId: string
+        barcode: string
+        product_name?: string
+        full_weight_g?: number
+        tare_weight_g?: number | null
+      }
+
+  let {
+    item,
+    onclose,
+    onSave,
+  }: {
+    item: Item | null
+    onclose: () => void
+    /*
+      Optional save callback. When omitted the edit affordances are
+      hidden entirely so the modal can still be used as a read-only
+      viewer (e.g. on routes that don't expose update actions).
+    */
+    onSave?: (patch: ItemEditPatch) => Promise<void> | void
+  } = $props()
+
+  const canEdit = $derived(typeof onSave === 'function')
 
   let dialogEl: HTMLDialogElement | undefined = $state()
 
@@ -74,6 +115,137 @@
   function formatWeight(g: number | null) {
     if (g === null || g === undefined) return null
     return `${Math.round(g)} g`
+  }
+
+  // ── Inline editing ────────────────────────────────────────────────────────
+  /*
+    One field can be in edit mode at a time. The draft value lives
+    here so we don't mutate the parent's data optimistically; we only
+    commit after the server confirms the write. `editError` is per-
+    field-instance because users can only see one editor at a time.
+  */
+  type EditField = 'product_name' | 'full_weight_g' | 'tare_weight_g' | 'expiry_date'
+  let editingField = $state<EditField | null>(null)
+  let editDraft    = $state<string>('')
+  let editError    = $state<string | null>(null)
+  let editBusy     = $state(false)
+  let editInput    = $state<HTMLInputElement | null>(null)
+
+  function startEdit(field: EditField) {
+    if (!item || !canEdit) return
+    editingField = field
+    editError = null
+    if (field === 'product_name') editDraft = item.product_name ?? ''
+    else if (field === 'full_weight_g') editDraft = item.full_weight_g != null ? String(Math.round(item.full_weight_g)) : ''
+    else if (field === 'tare_weight_g') editDraft = item.tare_weight_g != null ? String(Math.round(item.tare_weight_g)) : ''
+    else if (field === 'expiry_date')   editDraft = item.expiry_date ?? ''
+    queueMicrotask(() => editInput?.focus())
+  }
+
+  function cancelEdit() {
+    if (editBusy) return
+    editingField = null
+    editError = null
+  }
+
+  /*
+    Reset edit state whenever the modal target changes. Without this
+    a half-finished edit on item A would briefly leak into item B
+    when the user closes one and opens another.
+  */
+  $effect(() => {
+    void item?.id
+    editingField = null
+    editError = null
+    editBusy = false
+  })
+
+  async function postForm(action: string, fields: Record<string, string>) {
+    const body = new FormData()
+    for (const [k, v] of Object.entries(fields)) body.append(k, v)
+    /*
+      `x-sveltekit-action` tells SvelteKit to dispatch to the form
+      action handler in +page.server.ts (rather than +server.ts when
+      one exists alongside) and to return a serialised ActionResult.
+      We use `deserialize` from $app/forms because the payload may
+      include Date/BigInt and friends which JSON.parse can't restore.
+    */
+    const res = await fetch(action, {
+      method: 'POST',
+      body,
+      headers: { 'x-sveltekit-action': 'true' },
+    })
+    const result = deserialize(await res.text()) as ActionResult
+    if (result.type === 'success') {
+      return (result.data ?? {}) as Record<string, unknown>
+    }
+    if (result.type === 'failure') {
+      const data = (result.data ?? {}) as Record<string, unknown>
+      const inner =
+        (data.editProduct as { error?: string } | undefined) ??
+        (data.editExpiry as { error?: string } | undefined) ??
+        (data as { error?: string })
+      throw new Error(inner?.error ?? 'Save failed.')
+    }
+    if (result.type === 'error') {
+      throw new Error(result.error?.message ?? 'Save failed.')
+    }
+    throw new Error('Save failed.')
+  }
+
+  async function commitEdit() {
+    if (!item || !editingField || !onSave) return
+    editBusy = true
+    editError = null
+    try {
+      if (editingField === 'expiry_date') {
+        const trimmed = editDraft.trim()
+        await postForm('?/updateExpiry', {
+          item_id: item.id,
+          expiry_date: trimmed,
+        })
+        await onSave({
+          kind: 'expiry',
+          itemId: item.id,
+          expiry_date: trimmed === '' ? null : trimmed,
+        })
+      } else {
+        await postForm('?/updateProduct', {
+          item_id: item.id,
+          field: editingField,
+          value: editDraft,
+        })
+        const patch: ItemEditPatch = {
+          kind: 'product',
+          itemId: item.id,
+          barcode: item.barcode,
+        }
+        if (editingField === 'product_name') {
+          patch.product_name = editDraft.trim()
+        } else if (editingField === 'full_weight_g') {
+          patch.full_weight_g = Math.round(parseFloat(editDraft))
+        } else if (editingField === 'tare_weight_g') {
+          const trimmed = editDraft.trim()
+          patch.tare_weight_g = trimmed === '' ? null : Math.round(parseFloat(trimmed))
+        }
+        await onSave(patch)
+      }
+      editingField = null
+    } catch (e) {
+      editError = e instanceof Error ? e.message : 'Save failed.'
+    } finally {
+      editBusy = false
+    }
+  }
+
+  function handleEditKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelEdit()
+    } else if (e.key === 'Enter' && editingField !== null) {
+      e.preventDefault()
+      void commitEdit()
+    }
   }
 
   /*
@@ -214,9 +386,33 @@
           {/if}
         </div>
         <div class="modal-hero__text">
-          <h2 id="product-modal-title" class="modal-title">
-            {item.product_name ?? item.barcode}
-          </h2>
+          {#if editingField === 'product_name'}
+            <div class="edit-row edit-row--title">
+              <input
+                bind:this={editInput}
+                bind:value={editDraft}
+                onkeydown={handleEditKey}
+                disabled={editBusy}
+                maxlength="120"
+                class="edit-input edit-input--title"
+                aria-label="Product name"
+              />
+              <div class="edit-actions">
+                <button type="button" class="edit-btn edit-btn--cancel" onclick={cancelEdit} disabled={editBusy} aria-label="Cancel">✕</button>
+                <button type="button" class="edit-btn edit-btn--save" onclick={commitEdit} disabled={editBusy} aria-label="Save">{editBusy ? '…' : '✓'}</button>
+              </div>
+            </div>
+            {#if editError}<p class="edit-error" role="alert">{editError}</p>{/if}
+          {:else}
+            <h2 id="product-modal-title" class="modal-title">
+              <span class="modal-title__text">{item.product_name ?? item.barcode}</span>
+              {#if canEdit}
+                <button type="button" class="edit-pencil" onclick={() => startEdit('product_name')} aria-label="Edit product name" title="Edit name">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                </button>
+              {/if}
+            </h2>
+          {/if}
           {#if item.brand}
             <p class="modal-brand">{item.brand}</p>
           {/if}
@@ -247,21 +443,125 @@
             <dt>Barcode</dt>
             <dd>{item.barcode}</dd>
           </div>
-          {#if formatWeight(item.full_weight_g)}
-            <div>
-              <dt>Full weight</dt>
-              <dd>{formatWeight(item.full_weight_g)}</dd>
-            </div>
-          {/if}
+
+          <!-- Full weight (editable, shared across catalog) -->
+          <div>
+            <dt>Full weight</dt>
+            <dd>
+              {#if editingField === 'full_weight_g'}
+                <div class="edit-row">
+                  <input
+                    bind:this={editInput}
+                    bind:value={editDraft}
+                    onkeydown={handleEditKey}
+                    disabled={editBusy}
+                    type="number"
+                    inputmode="numeric"
+                    min="1"
+                    step="1"
+                    placeholder="grams"
+                    class="edit-input edit-input--num"
+                    aria-label="Full weight in grams"
+                  />
+                  <span class="edit-unit">g</span>
+                  <div class="edit-actions">
+                    <button type="button" class="edit-btn edit-btn--cancel" onclick={cancelEdit} disabled={editBusy} aria-label="Cancel">✕</button>
+                    <button type="button" class="edit-btn edit-btn--save" onclick={commitEdit} disabled={editBusy} aria-label="Save">{editBusy ? '…' : '✓'}</button>
+                  </div>
+                </div>
+                <p class="edit-note">Shared across all shelves with this product.</p>
+                {#if editError}<p class="edit-error" role="alert">{editError}</p>{/if}
+              {:else}
+                <span class="meta-value">
+                  {formatWeight(item.full_weight_g) ?? 'Not set'}
+                </span>
+                {#if canEdit}
+                  <button type="button" class="edit-pencil edit-pencil--inline" onclick={() => startEdit('full_weight_g')} aria-label="Edit full weight" title="Edit">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  </button>
+                {/if}
+              {/if}
+            </dd>
+          </div>
+
+          <!-- Tare weight (editable, shared, optional) -->
+          <div>
+            <dt>Tare weight <small class="meta-hint">(empty container)</small></dt>
+            <dd>
+              {#if editingField === 'tare_weight_g'}
+                <div class="edit-row">
+                  <input
+                    bind:this={editInput}
+                    bind:value={editDraft}
+                    onkeydown={handleEditKey}
+                    disabled={editBusy}
+                    type="number"
+                    inputmode="numeric"
+                    min="0"
+                    step="1"
+                    placeholder="grams (optional)"
+                    class="edit-input edit-input--num"
+                    aria-label="Tare weight in grams"
+                  />
+                  <span class="edit-unit">g</span>
+                  <div class="edit-actions">
+                    <button type="button" class="edit-btn edit-btn--cancel" onclick={cancelEdit} disabled={editBusy} aria-label="Cancel">✕</button>
+                    <button type="button" class="edit-btn edit-btn--save" onclick={commitEdit} disabled={editBusy} aria-label="Save">{editBusy ? '…' : '✓'}</button>
+                  </div>
+                </div>
+                <p class="edit-note">Shared across all shelves. Leave blank to clear.</p>
+                {#if editError}<p class="edit-error" role="alert">{editError}</p>{/if}
+              {:else}
+                <span class="meta-value">
+                  {formatWeight(item.tare_weight_g) ?? 'Not set'}
+                </span>
+                {#if canEdit}
+                  <button type="button" class="edit-pencil edit-pencil--inline" onclick={() => startEdit('tare_weight_g')} aria-label="Edit tare weight" title="Edit">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  </button>
+                {/if}
+              {/if}
+            </dd>
+          </div>
+
           {#if formatWeight(item.current_weight_g)}
             <div>
               <dt>Current weight</dt>
               <dd>{formatWeight(item.current_weight_g)}</dd>
             </div>
           {/if}
+
+          <!-- Expiry (editable, per-shelf-item) -->
           <div>
             <dt>Expires</dt>
-            <dd>{formatExpiry(item.expiry_date)}</dd>
+            <dd>
+              {#if editingField === 'expiry_date'}
+                <div class="edit-row">
+                  <input
+                    bind:this={editInput}
+                    bind:value={editDraft}
+                    onkeydown={handleEditKey}
+                    disabled={editBusy}
+                    type="date"
+                    class="edit-input edit-input--date"
+                    aria-label="Expiry date"
+                  />
+                  <div class="edit-actions">
+                    <button type="button" class="edit-btn edit-btn--cancel" onclick={cancelEdit} disabled={editBusy} aria-label="Cancel">✕</button>
+                    <button type="button" class="edit-btn edit-btn--save" onclick={commitEdit} disabled={editBusy} aria-label="Save">{editBusy ? '…' : '✓'}</button>
+                  </div>
+                </div>
+                <p class="edit-note">Leave blank to clear.</p>
+                {#if editError}<p class="edit-error" role="alert">{editError}</p>{/if}
+              {:else}
+                <span class="meta-value">{formatExpiry(item.expiry_date)}</span>
+                {#if canEdit}
+                  <button type="button" class="edit-pencil edit-pencil--inline" onclick={() => startEdit('expiry_date')} aria-label="Edit expiry date" title="Edit">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  </button>
+                {/if}
+              {/if}
+            </dd>
           </div>
         </dl>
       </section>
@@ -562,6 +862,169 @@
     margin: 0.1rem 0 0;
     font-size: 0.9rem;
     overflow-wrap: anywhere;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .meta-value {
+    overflow-wrap: anywhere;
+  }
+
+  .meta-hint {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    margin-left: 0.2rem;
+  }
+
+  /* ── Inline edit affordances ─────────────────────────────────────────── */
+  .edit-pencil {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    opacity: 0.45;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: opacity 0.15s ease, background 0.15s ease;
+  }
+
+  .edit-pencil:hover,
+  .edit-pencil:focus-visible {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .edit-pencil--inline {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .modal-title {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .modal-title__text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .edit-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .edit-row--title {
+    margin-bottom: 0.2rem;
+  }
+
+  .edit-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.4rem 0.55rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .edit-input:focus {
+    border-color: var(--matcha);
+    box-shadow: 0 0 0 3px var(--matcha-soft);
+  }
+
+  .edit-input--title {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .edit-input--num {
+    max-width: 6.5rem;
+  }
+
+  .edit-input--date {
+    max-width: 10rem;
+  }
+
+  .edit-unit {
+    font-size: 0.85rem;
+    opacity: 0.7;
+  }
+
+  .edit-actions {
+    display: inline-flex;
+    gap: 0.25rem;
+    margin-left: auto;
+  }
+
+  .edit-btn {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+
+  .edit-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .edit-btn--save {
+    background: var(--matcha, #7a8b3f);
+    color: white;
+    border-color: transparent;
+  }
+
+  .edit-btn--save:hover:not(:disabled) {
+    filter: brightness(0.95);
+  }
+
+  .edit-btn--cancel:hover:not(:disabled) {
+    background: var(--background);
+  }
+
+  .edit-note {
+    flex-basis: 100%;
+    margin: 0.15rem 0 0;
+    font-size: 0.7rem;
+    opacity: 0.65;
+    line-height: 1.3;
+  }
+
+  .edit-error {
+    flex-basis: 100%;
+    margin: 0.25rem 0 0;
+    padding: 0.3rem 0.5rem;
+    background: rgba(164, 0, 0, 0.08);
+    border-left: 2px solid var(--error, #a40000);
+    border-radius: var(--radius-xs, 4px);
+    font-size: 0.78rem;
+    color: var(--error, #a40000);
   }
 
   /* ── Nutrition ────────────────────────────────────────────────────────── */

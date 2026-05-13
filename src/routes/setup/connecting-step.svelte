@@ -73,7 +73,7 @@
         <span class="dot"></span>
         <span>Elapsed {fmtElapsed(elapsed)}</span>
         <span class="sep">·</span>
-        <span>Usually 1–6 min</span>
+        <span>Up to 2 min</span>
     </div>
 
     {#if offline}

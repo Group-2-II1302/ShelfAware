@@ -1,7 +1,24 @@
 import { error, fail, redirect } from "@sveltejs/kit";
 import type { Actions, PageServerLoad } from "./$types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { SLOTS_PER_SHELF, getZoneForSlot, type ZoneId } from "$lib/shelf";
 import { computeState } from "$lib/shelfState";
+
+/*
+  Force the alert generator to re-run right now instead of waiting for
+  the every-minute pg_cron tick. Used after user-initiated edits so
+  the inbox / toast updates feel instant. Failures are logged but not
+  propagated — alerts will catch up on the next cron tick anyway.
+*/
+async function regenerateAlertsNow(supabase: SupabaseClient): Promise<void> {
+  const { error: rpcErr } = await supabase.rpc("generate_alerts");
+  if (rpcErr) {
+    console.warn(
+      "[shelf actions] generate_alerts RPC failed (will retry via cron):",
+      rpcErr.message,
+    );
+  }
+}
 import {
   computeInsights,
   resolveRange,
@@ -586,5 +603,261 @@ export const actions: Actions = {
     }
 
     return { success: true };
+  },
+
+  /**
+   * Update the expiry date of a single shelf_items row. Used by the
+   * inline edit affordance in the item details modal. Empty / blank
+   * input clears the date. RLS on shelf_items scopes the write.
+   */
+  updateExpiry: async ({ request, locals, params }) => {
+    const {
+      data: { user },
+    } = await locals.supabase.auth.getUser();
+    if (!user) {
+      return fail(401, { error: "Not authenticated" });
+    }
+
+    const shelfId = params.shelf_id;
+    const formData = await request.formData();
+    const itemId = formData.get("item_id")?.toString().trim();
+    const expiryRaw = formData.get("expiry_date")?.toString().trim() ?? "";
+
+    if (!itemId) {
+      return fail(400, { editExpiry: { error: "Missing item id." } });
+    }
+
+    /*
+      Empty string means "clear the date". Otherwise validate it's a
+      real ISO date so we don't store garbage that breaks the
+      Intl.DateTimeFormat call on render.
+    */
+    let expiryValue: string | null = null;
+    if (expiryRaw.length > 0) {
+      const d = new Date(expiryRaw);
+      if (isNaN(d.getTime())) {
+        return fail(400, {
+          editExpiry: { error: "Enter a valid date." },
+        });
+      }
+      expiryValue = expiryRaw;
+    }
+
+    const { error: updErr } = await locals.supabase
+      .from("shelf_items")
+      .update({ expiry_date: expiryValue })
+      .eq("id", itemId)
+      .eq("shelf_id", shelfId);
+
+    if (updErr) {
+      console.error("updateExpiry failed:", updErr.message);
+      return fail(500, { editExpiry: { error: updErr.message } });
+    }
+
+    /*
+      Re-evaluate alerts immediately so a newly-past expiry surfaces
+      a toast/inbox entry without waiting for the next cron tick. The
+      shelf_items trigger does this too, but awaiting the explicit
+      RPC guarantees the alerts table has settled before we return.
+    */
+    await regenerateAlertsNow(locals.supabase);
+
+    return { editExpiry: { success: true, expiry_date: expiryValue } };
+  },
+
+  /**
+   * Update one or more product_catalog fields (product_name,
+   * full_weight_g, tare_weight_g) for the product currently in a
+   * given slot. Used by inline edits in the item details modal.
+   * Catalog rows are shared across every shelf with that barcode,
+   * so the modal warns the user before saving.
+   */
+  updateProduct: async ({ request, locals, params }) => {
+    const {
+      data: { user },
+    } = await locals.supabase.auth.getUser();
+    if (!user) {
+      return fail(401, { error: "Not authenticated" });
+    }
+
+    const shelfId = params.shelf_id;
+    const formData = await request.formData();
+    const itemId = formData.get("item_id")?.toString().trim();
+    const field = formData.get("field")?.toString().trim();
+    const valueRaw = formData.get("value")?.toString() ?? "";
+
+    if (!itemId) {
+      return fail(400, { editProduct: { error: "Missing item id." } });
+    }
+    if (
+      field !== "product_name" &&
+      field !== "full_weight_g" &&
+      field !== "tare_weight_g"
+    ) {
+      return fail(400, { editProduct: { error: "Unsupported field." } });
+    }
+
+    /*
+      Look up the barcode for this shelf_items row. Catalog edits key
+      off barcode, not item id. Scope to shelfId so RLS verifies
+      membership.
+    */
+    const { data: itemRow, error: itemErr } = await locals.supabase
+      .from("shelf_items")
+      .select("barcode")
+      .eq("id", itemId)
+      .eq("shelf_id", shelfId)
+      .maybeSingle();
+    if (itemErr) {
+      console.error("updateProduct: lookup failed:", itemErr.message);
+      return fail(500, { editProduct: { error: itemErr.message } });
+    }
+    if (!itemRow?.barcode) {
+      return fail(404, { editProduct: { error: "Item not found." } });
+    }
+
+    let payload: Record<string, unknown> = {};
+
+    if (field === "product_name") {
+      const name = valueRaw.trim();
+      if (!name) {
+        return fail(400, {
+          editProduct: { error: "Name cannot be empty." },
+        });
+      }
+      if (name.length > 120) {
+        return fail(400, {
+          editProduct: { error: "Name must be 120 characters or fewer." },
+        });
+      }
+      payload = { product_name: name };
+    } else {
+      /*
+        Weight fields. Empty string clears tare_weight_g (allowed),
+        but full_weight_g must remain positive — anything else makes
+        the slot uncalibrated, which we now actively avoid.
+      */
+      const trimmed = valueRaw.trim();
+      if (trimmed === "") {
+        if (field === "full_weight_g") {
+          return fail(400, {
+            editProduct: {
+              error: "Full weight is required to keep the slot calibrated.",
+            },
+          });
+        }
+        payload = { tare_weight_g: null };
+      } else {
+        const n = parseFloat(trimmed);
+        if (!Number.isFinite(n) || n < 0) {
+          return fail(400, {
+            editProduct: { error: "Enter a non-negative number." },
+          });
+        }
+        if (field === "full_weight_g" && n <= 0) {
+          return fail(400, {
+            editProduct: { error: "Full weight must be greater than zero." },
+          });
+        }
+        payload = { [field]: Math.round(n) };
+      }
+    }
+
+    const { error: updErr } = await locals.supabase
+      .from("product_catalog")
+      .update(payload)
+      .eq("barcode", itemRow.barcode);
+
+    if (updErr) {
+      console.error("updateProduct failed:", updErr.message);
+      return fail(500, { editProduct: { error: updErr.message } });
+    }
+
+    /*
+      Catalog edits change calibration (full / tare weight) which feeds
+      into LOWSTOCK evaluation — the shelf_items trigger doesn't fire
+      for product_catalog updates, so we must invoke generate_alerts
+      explicitly here. Cheap (~tens of ms) and avoids the up-to-60s
+      cron lag.
+    */
+    await regenerateAlertsNow(locals.supabase);
+
+    return { editProduct: { success: true, ...payload } };
+  },
+
+  /**
+   * Set / update `product_catalog.full_weight_g` for the product
+   * currently in a given slot. Drives the "Calibrate now" affordance
+   * on uncalibrated slot cards: lets the user retro-fit a weight on
+   * items that were added before calibration was enforced (or where
+   * OpenFoodFacts didn't return one). RLS on product_catalog already
+   * scopes writes to the user's household.
+   */
+  calibrateItem: async ({ request, locals, params }) => {
+    const {
+      data: { user },
+    } = await locals.supabase.auth.getUser();
+    if (!user) {
+      return fail(401, { error: "Not authenticated" });
+    }
+
+    const shelfId = params.shelf_id;
+    const formData = await request.formData();
+    const scaleIndexRaw = formData.get("scale_index")?.toString();
+    const scaleIndex = parseInt(scaleIndexRaw ?? "", 10);
+    const weightRaw = formData.get("full_weight_g")?.toString();
+    const weight = parseFloat(weightRaw ?? "");
+
+    if (isNaN(scaleIndex) || scaleIndex < 0) {
+      return fail(400, { calibrate: { error: "Invalid slot." } });
+    }
+    if (!Number.isFinite(weight) || weight <= 0) {
+      return fail(400, {
+        calibrate: { error: "Enter a positive weight in grams." },
+      });
+    }
+
+    /*
+      Resolve the barcode of the item currently in this slot. We need
+      it to update the right product_catalog row; updating by item id
+      isn't possible because calibration lives on the catalog, not
+      the per-shelf row.
+    */
+    const { data: itemRow, error: itemErr } = await locals.supabase
+      .from("shelf_items")
+      .select("barcode")
+      .eq("shelf_id", shelfId)
+      .eq("scale_index", scaleIndex)
+      .maybeSingle();
+
+    if (itemErr) {
+      console.error("calibrateItem: lookup failed:", itemErr.message);
+      return fail(500, { calibrate: { error: itemErr.message } });
+    }
+    if (!itemRow?.barcode) {
+      return fail(404, {
+        calibrate: { error: "Slot is empty — nothing to calibrate." },
+      });
+    }
+
+    const { error: updErr } = await locals.supabase
+      .from("product_catalog")
+      .update({ full_weight_g: Math.round(weight) })
+      .eq("barcode", itemRow.barcode);
+
+    if (updErr) {
+      console.error("calibrateItem: update failed:", updErr.message);
+      return fail(500, { calibrate: { error: updErr.message } });
+    }
+
+    /*
+      Same reasoning as updateProduct: calibration changes can flip a
+      slot's LOWSTOCK status, but the product_catalog write doesn't
+      hit the shelf_items trigger. Run generate_alerts() now so the
+      inbox / toast match what the user just changed.
+    */
+    await regenerateAlertsNow(locals.supabase);
+
+    return { calibrate: { success: true } };
   },
 };

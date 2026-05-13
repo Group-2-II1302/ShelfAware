@@ -31,8 +31,6 @@
 
   // ===== Tunables =====
   const UPSCALE = 2
-  // Show manual input after this many failed scan cycles (no date found at all)
-  const SHOW_MANUAL_AFTER_FAIL = 2
   // Crop area — same proportions as the green overlay box
   const CROP_W_RATIO = 0.7
   const CROP_H_RATIO = 0.25
@@ -193,9 +191,13 @@
         editError = null
       } else {
         failCount += 1
-        errorMessage = failCount >= SHOW_MANUAL_AFTER_FAIL
-          ? 'Still struggling — type what you see below and tap Use.'
-          : 'No date found. Try moving closer or improving lighting.'
+        /*
+          Manual input is always visible below now, so we don't need
+          the "type what you see below" escalation copy. Keep a short
+          single-line tip so the user has actionable feedback when
+          auto-detect can't find a date.
+        */
+        errorMessage = 'No date found. Try better lighting, or type it below.'
       }
     } catch (err) {
       console.error('Vision OCR error:', err)
@@ -213,6 +215,15 @@
     if (parsed) {
       manualError = false
       foundDate = parsed
+      /*
+        Also seed the editable result input so the day/month/year
+        spinners on the result panel show the value the user just
+        entered. Without this the result panel would render with an
+        empty date input — matching the auto-scan path which sets
+        both fields when it succeeds.
+      */
+      editedDateIso = ddmmyyyyToIso(parsed)
+      editError = null
     } else {
       manualError = true
     }
@@ -313,8 +324,15 @@
       </div>
     {/if}
 
-    <!-- Manual input — appears after SHOW_MANUAL_AFTER_FAIL failed cycles (no date found) -->
-    {#if failCount >= SHOW_MANUAL_AFTER_FAIL && !foundDate}
+    <!--
+      Manual input — always visible while we don't yet have a date.
+      Earlier this was gated behind SHOW_MANUAL_AFTER_FAIL retries,
+      but users with hard-to-OCR labels were left tapping Scan with
+      no obvious escape hatch. Showing it up-front is a better
+      affordance; the auto-scan still takes precedence whenever it
+      succeeds.
+    -->
+    {#if !foundDate}
       <div class="manual-panel">
         <p class="manual-hint">
           Can't read it automatically? Type what you see on the label — any

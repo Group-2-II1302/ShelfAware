@@ -34,8 +34,15 @@
     product_name: '',
     brand: '',
     image_url: '',
-    full_weight_g: 0
+    /*
+      Null instead of 0 so the input renders as empty rather than "0",
+      which used to nudge users to skip past it. The form requires a
+      positive value before submit so the slot ends up calibrated.
+    */
+    full_weight_g: null as number | null
   });
+
+  let manualError = $state<string | null>(null);
 
   // Keep state synced with prop updates
   $effect(() => {
@@ -154,7 +161,20 @@
   function handleManualSubmit(e: Event) {
     e.preventDefault();
 
-    onManualSave({ ...formData });
+    /*
+      Belt-and-braces guard on top of the input's native `required` /
+      `min` validation: HTML number inputs return `null` when the
+      field is empty, and some browsers (or autofill flows) skip
+      native validation, so we re-check here before propagating up.
+    */
+    const w = Number(formData.full_weight_g);
+    if (!Number.isFinite(w) || w <= 0) {
+      manualError = 'Enter the product weight (in grams) so the shelf can track fullness.';
+      return;
+    }
+    manualError = null;
+
+    onManualSave({ ...formData, full_weight_g: Math.round(w) });
   }
 
   onMount(() => {
@@ -237,9 +257,26 @@
           <input id="brand" type="text" bind:value={formData.brand} />
         </div>
         <div class="field">
-          <label for="weight">Weight (g)</label>
-          <input id="weight" type="number" bind:value={formData.full_weight_g} />
+          <label for="weight">Weight (g) <span class="field__req" aria-hidden="true">*</span></label>
+          <input
+            id="weight"
+            type="number"
+            inputmode="numeric"
+            min="1"
+            step="1"
+            placeholder="e.g. 250"
+            bind:value={formData.full_weight_g}
+            oninput={() => (manualError = null)}
+            required
+            aria-invalid={manualError ? 'true' : undefined}
+          />
+          <p class="field__hint">
+            Net weight from the packaging — used to compute fullness.
+          </p>
         </div>
+        {#if manualError}
+          <p class="manual-form__error" role="alert">{manualError}</p>
+        {/if}
         <div class="form-actions">
           <button
             type="button"
@@ -365,6 +402,34 @@
     border-color: var(--matcha);
     background: var(--surface);
     box-shadow: 0 0 0 3px var(--matcha-soft);
+  }
+
+  .field input[aria-invalid="true"] {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px rgba(164, 0, 0, 0.12);
+  }
+
+  .field__req {
+    color: var(--error);
+    margin-left: 0.15rem;
+  }
+
+  .field__hint {
+    margin: 0.2rem 0 0;
+    font-size: 0.74rem;
+    color: var(--text);
+    opacity: 0.65;
+    line-height: 1.35;
+  }
+
+  .manual-form__error {
+    margin: 0;
+    padding: 0.5rem 0.7rem;
+    background: rgba(164, 0, 0, 0.08);
+    border-left: 3px solid var(--error);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    color: var(--error);
   }
 
   .button-group {
