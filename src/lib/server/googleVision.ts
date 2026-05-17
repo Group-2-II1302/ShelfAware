@@ -198,7 +198,22 @@ export async function detectText(
       requests: [
         {
           image: { content: base64Image },
-          features: [{ type: "TEXT_DETECTION", maxResults: 5 }],
+          /*
+            DOCUMENT_TEXT_DETECTION is tuned for dense / structured
+            text (labels, packaging, receipts). For our use case —
+            small printed expiry stamps surrounded by lots of other
+            packaging text — it consistently outperforms the basic
+            TEXT_DETECTION feature, which is optimised for sparse
+            text on signs and street scenes.
+          */
+          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+          /*
+            English-only hint. Vision auto-detects by default but
+            forcing English when we know the corpus speeds up the
+            response and cuts false positives on date words like
+            "MAY" being read as Bahasa or Tagalog.
+          */
+          imageContext: { languageHints: ["en"] },
         },
       ],
     }),
