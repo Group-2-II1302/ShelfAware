@@ -32,6 +32,31 @@ export const BUCKET_LABEL: Record<StateBucket, string> = {
 export const NOT_CALIBRATED_LABEL = "Not calibrated";
 
 /**
+ * Discrete display widths (0–100 %) for the slot fullness bar, keyed
+ * by bucket. Used to *snap* the bar to a small set of visual states
+ * instead of letting the noisy raw FSR reading drive the width
+ * directly. Sensors drift ±5 % in normal operation, which would
+ * otherwise make the bar jitter every realtime weight log even
+ * though the underlying bucket hasn't changed.
+ *
+ * Each value sits visually in the middle of its bucket band so the
+ * bar still reads as "half full" / "almost full" rather than as
+ * five identical bars at fixed positions.
+ */
+export const BUCKET_WIDTH_PCT: Record<StateBucket, number> = {
+  empty: 4,
+  low: 22,
+  half: 50,
+  mostly_full: 80,
+  full: 100,
+};
+
+export function bucketWidthPct(state: number | null): number {
+  const bucket = bucketFromState(state);
+  return bucket === null ? 0 : BUCKET_WIDTH_PCT[bucket];
+}
+
+/**
  * Recompute `state` on the fly from a slot's current weight and the
  * product's calibration. Returns null when full_weight_g is missing —
  * we genuinely can't compute fullness without a "full" reference.
