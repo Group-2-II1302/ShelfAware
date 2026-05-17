@@ -30,32 +30,44 @@
   let manualError = $state(false)
 
   // ===== Tunables =====
-  const UPSCALE = 2
-  // Crop area — same proportions as the green overlay box
-  const CROP_W_RATIO = 0.7
-  const CROP_H_RATIO = 0.25
-  const CROP_Y_RATIO = 0.1
+  /*
+    Crop is a generous box around the green overlay rather than a
+    tight strip. Earlier we cropped to a thin 25%-tall band that
+    matched the visual guide, but real users aim the whole product
+    at the box — and the actual printed date is often above or
+    below the line they think they're aligning to. A loose crop
+    keeps the date in frame at the cost of a slightly larger
+    upload, which Vision handles fine.
+  */
+  const CROP_W_RATIO = 0.92
+  const CROP_H_RATIO = 0.55
+  const CROP_Y_RATIO = 0.05
 
   // ===== Helpers =====
   /**
-   * Convert obvious OCR misreads in tokens that should be numeric.
+   * Conservative digit-look-alike correction. Only used as a SECOND
+   * pass after raw parse fails — see findDate(). Letters that Vision
+   * almost never confuses (S↔5, B↔8) are deliberately omitted because
+   * they corrupt month abbreviations like "SEP" / "BEST BEFORE".
    */
   function fixDigitOnly(token: string): string {
     return token
-      .replace(/[Oo]/g, '0')
-      .replace(/[Il|]/g, '1')
-      .replace(/[Ss]/g, '5')
-      .replace(/[Bb]/g, '8')
-      .replace(/[zZ]/g, '2')
-      .replace(/[gqG]/g, '9')
+      .replace(/[Oo]/g, "0")
+      .replace(/[Il|]/g, "1")
+      .replace(/[zZ]/g, "2")
   }
 
   /**
-   * Apply OCR digit-correction then delegate to the shared parseExpiryDate
-   * utility. Returns "DD-MM-YYYY" or empty string.
+   * Two-pass parse: try the raw Vision output first (it's already
+   * accurate ~95% of the time when a date is present), and only fall
+   * back to the digit-correction pass if that fails. This avoids
+   * mangling correctly-detected month names while still rescuing
+   * dot-matrix prints where O/0 and I/1 are genuinely ambiguous.
    */
   function findDate(text: string): string {
     if (!text) return ''
+    const direct = parseExpiryDate(text)
+    if (direct) return direct
     const corrected = fixDigitOnly(text)
     return parseExpiryDate(corrected) ?? ''
   }
@@ -82,8 +94,21 @@
   async function startCamera() {
     errorMessage = null
     try {
+      /*
+        Ask explicitly for a high-res stream. Without these hints
+        most browsers default to 640x480, which makes small expiry
+        prints (8-12pt) only ~12 pixels tall — below Vision's
+        reliable detection threshold. 1920x1080 with `ideal`
+        constraints lets the browser fall back gracefully on
+        devices that can't do full HD, while still pushing
+        anything modern up to native sensor resolution.
+      */
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
         audio: false,
       })
       if (videoElement) {
@@ -113,25 +138,36 @@
     const sh = videoElement.videoHeight
     if (!sw || !sh) return null
 
-    // Crop to the green overlay box
+    // Loose crop around the green overlay (see CROP_* constants).
     const cropW = Math.floor(sw * CROP_W_RATIO)
     const cropH = Math.floor(sh * CROP_H_RATIO)
     const cropX = Math.floor((sw - cropW) / 2)
     const cropY = Math.floor(sh * CROP_Y_RATIO)
 
-    canvasElement.width  = cropW * UPSCALE
-    canvasElement.height = cropH * UPSCALE
+    /*
+      Send the cropped region at native resolution. Earlier code
+      upscaled 2× before sending — that bloats the payload and
+      doesn't actually help Vision (the model is trained on natural
+      images, not bicubic-upscaled crops). Native pixels give better
+      OCR accuracy at a fraction of the upload size.
+    */
+    canvasElement.width = cropW
+    canvasElement.height = cropH
 
-    // Mild contrast + grayscale — enough to sharpen ink on busy backgrounds
-    // without losing detail that Vision's model relies on.
-    ctx.filter = 'contrast(1.3) grayscale(1)'
+    /*
+      No filter. Vision's model was trained on natural colour photos
+      and explicitly recommends *not* preprocessing input. Earlier we
+      ran contrast(1.3) + grayscale(1) which hurt accuracy on ink-on-
+      foil packaging by clipping the date stamp's edge contrast, and
+      stripped colour cues the model uses to separate text from
+      noise.
+    */
     ctx.imageSmoothingEnabled = true
     ctx.drawImage(
       videoElement,
       cropX, cropY, cropW, cropH,
       0, 0, canvasElement.width, canvasElement.height,
     )
-    ctx.filter = 'none'
 
     // Mirror into the preview thumbnail so the user sees exactly what
     // gets sent to the API.
@@ -144,7 +180,12 @@
       }
     }
 
-    return canvasElement.toDataURL('image/png')
+    /*
+      JPEG @ 0.92 quality is visually indistinguishable from PNG for
+      OCR purposes and ~10× smaller on the wire, which speeds up the
+      round-trip noticeably on mobile data.
+    */
+    return canvasElement.toDataURL('image/jpeg', 0.92)
   }
 
   // ===== Scan =====
