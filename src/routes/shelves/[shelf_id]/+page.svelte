@@ -7,6 +7,7 @@
   import { ZONES } from '$lib/shelf'
   import {
     bucketFromState,
+    bucketWidthPct,
     BUCKET_LABEL,
     NOT_CALIBRATED_LABEL,
     computeState,
@@ -803,9 +804,19 @@
                         aria-valuenow={Math.round(slot.item.state * 100)}
                         aria-label="Fullness: {stateLabel(slot.item.state)}"
                       >
+                        <!--
+                          Width snaps to one of five discrete bucket
+                          widths instead of tracking the raw `state`
+                          float. The FSR sensors are noisy enough
+                          that a 100×-per-day weight reading would
+                          otherwise wiggle the bar by a few percent
+                          every update even when nothing changed.
+                          aria-valuenow above still exposes the real
+                          underlying value to screen readers.
+                        -->
                         <span
                           class="slot-state__bar-fill"
-                          style="width: {Math.max(0, Math.min(100, slot.item.state * 100))}%"
+                          style="width: {bucketWidthPct(slot.item.state)}%"
                         ></span>
                       </span>
                     {:else}
